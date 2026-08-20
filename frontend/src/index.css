@@ -661,3 +661,266 @@ table.standings td.team-name {
 .value-down {
   color: var(--pos-def);
 }
+
+/* --- ADP heat map ---------------------------------------------------------
+   Heat is availability, not value. The coin-flip band is the loudest because it
+   marks the players genuinely in play at your pick, which is where a decision
+   actually gets made. */
+
+.board-controls {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  background: var(--ink-700);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.board-controls .field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-controls label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.board-controls input[type="range"] {
+  width: 168px;
+  accent-color: var(--live);
+}
+
+.slot-value {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  min-width: 46px;
+}
+
+.slot-value .of {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.board-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+/* Availability bands. Green reads "still there", red reads "gone". */
+.band {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+  flex: none;
+}
+
+.band[data-band="likely"]   { color: var(--live); }
+.band[data-band="probable"] { color: #7fc8a9; }
+.band[data-band="coinflip"] { color: var(--pending); }
+.band[data-band="unlikely"] { color: var(--pos-k); }
+.band[data-band="gone"]     { color: var(--pos-def); }
+
+/* --- list view ----------------------------------------------------------- */
+
+.round-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.round-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 14px;
+  background: var(--ink-700);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.round-head .rnum {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.round-head .pnum {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Positional composition of what is realistically available at this pick -
+   the signal that tells you which position to take a round earlier. */
+.pos-counts {
+  margin-left: auto;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.pos-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pos-count b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.target-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.target-row:last-child {
+  border-bottom: none;
+}
+
+.target-figs {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.target-figs b {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* --- grid view ----------------------------------------------------------- */
+
+.grid-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+table.draft-grid {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 900px;
+}
+
+table.draft-grid th {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 7px 6px;
+  background: var(--ink-700);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+table.draft-grid th.slot-mine {
+  color: var(--live);
+}
+
+table.draft-grid td {
+  padding: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+
+table.draft-grid td:last-child {
+  border-right: none;
+}
+
+table.draft-grid .rlabel {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 6px 8px;
+  background: var(--ink-700);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cell {
+  padding: 5px 7px;
+  min-width: 96px;
+  border-left: 2px solid transparent;
+}
+
+/* Position tint: a wash of the positional hue, not a solid block, so text stays
+   readable and the grid still reads as one surface. */
+.cell[data-pos="QB"]  { border-left-color: var(--pos-qb); }
+.cell[data-pos="RB"]  { border-left-color: var(--pos-rb); }
+.cell[data-pos="WR"]  { border-left-color: var(--pos-wr); }
+.cell[data-pos="TE"]  { border-left-color: var(--pos-te); }
+.cell[data-pos="K"]   { border-left-color: var(--pos-k); }
+.cell[data-pos="DEF"] { border-left-color: var(--pos-def); }
+
+.cell.mine {
+  background: rgba(53, 201, 141, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(53, 201, 141, 0.35);
+}
+
+.cell .cname {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 128px;
+}
+
+.cell .cmeta {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+.cell.empty .cname {
+  color: var(--text-faint);
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.legend .swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: -1px;
+}

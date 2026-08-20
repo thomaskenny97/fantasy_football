@@ -191,6 +191,10 @@ class Draft(Base):
     # Sleeper: pre_draft / drafting / complete. ESPN exposes only drafted/inProgress.
     status: Mapped[str | None] = mapped_column(String(32), index=True)
     draft_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # {slot: platform_team_id}. ESPN publishes this in its pre-draft placeholder grid
+    # and Sleeper in draft_order, so a draft slot is known before any pick is made.
+    draft_order: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     season: Mapped[str] = mapped_column(String(8))
     start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -252,6 +256,11 @@ class Projection(Base):
     raw_stats: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Draft-relevant market data, carried alongside the projection.
+    # board_rank is this league's own ordering: ESPN's SUPERFLEX rank for a superflex
+    # league, otherwise STANDARD blended toward PPR by the league's reception value.
+    # ADP cannot serve as the board spine - it saturates around pick 170, where 295
+    # players share a single value.
+    board_rank: Mapped[float | None] = mapped_column(Float, index=True, nullable=True)
     adp: Mapped[float | None] = mapped_column(Float, nullable=True)
     auction_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     percent_owned: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -264,9 +273,44 @@ def make_engine(db_path: str | None = None, echo: bool = False):
     return create_engine(f"sqlite:///{path}", echo=echo, future=True)
 
 
+# Columns added after the first release. SQLAlchemy's create_all creates missing
+# tables but never alters existing ones, and this project has no migration tool, so
+# they are added by hand when absent.
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("projection", "board_rank", "FLOAT"),
+    ("draft", "draft_order", "JSON"),
+)
+
+
+def ensure_columns(engine) -> list[str]:
+    """Add columns introduced after a database was first created.
+
+    Returns the columns actually added, so a sync can report the migration.
+    """
+    added: list[str] = []
+    with engine.begin() as connection:
+        for table, column, column_type in _ADDED_COLUMNS:
+            existing = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    f"PRAGMA table_info({table})"
+                ).fetchall()
+            }
+            if not existing:
+                continue  # table not created yet; create_all will include the column
+            if column in existing:
+                continue
+            connection.exec_driver_sql(
+                f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
+            )
+            added.append(f"{table}.{column}")
+    return added
+
+
 def init_db(engine=None):
     engine = engine or make_engine()
     Base.metadata.create_all(engine)
+    ensure_columns(engine)
     return engine
 
 

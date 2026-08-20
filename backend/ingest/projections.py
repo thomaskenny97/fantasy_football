@@ -22,6 +22,7 @@ from backend.clients.espn import EspnClient
 from backend.db import League, Projection
 from backend.resolve.player_matching import PlayerRegistry
 from backend.resolve.stat_map import named_stats
+from backend.analysis.adp_board import board_rank_from
 from backend.db import PLATFORM_ESPN
 from backend.scoring.rules import (
     espn_to_sleeper_stats,
@@ -134,6 +135,10 @@ def sync_projections(
         raw = named_stats(raw_by_id)
         sleeper_stats = espn_to_sleeper_stats(raw)
 
+        # Each league gets the rank matching its own format, so a superflex league's
+        # board is genuinely a different board rather than the same one relabelled.
+        draft_ranks = player.get("draftRanksByRankType") or {}
+
         ownership = player.get("ownership") or {}
         adp = ownership.get("averageDraftPosition")
         auction = ownership.get("auctionValueAverage")
@@ -150,6 +155,7 @@ def sync_projections(
                     source=SOURCE_ESPN,
                     points=points,
                     raw_stats=raw,
+                    board_rank=board_rank_from(draft_ranks, league),
                     adp=float(adp) if adp is not None else None,
                     auction_value=float(auction) if auction is not None else None,
                     percent_owned=float(owned) if owned is not None else None,

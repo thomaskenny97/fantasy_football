@@ -104,6 +104,48 @@ type DraftState = {
   recentPicks: Pick[];
 };
 
+
+type BoardPlayer = {
+  sleeperId: string;
+  name: string;
+  position: string;
+  proTeam: string | null;
+  boardRank: number;
+  points: number;
+  vorp: number;
+  adp: number | null;
+  availability?: number;
+  band?: string;
+};
+
+type RoundTarget = {
+  round: number;
+  pick: number;
+  slotInRound: number;
+  targets: BoardPlayer[];
+  positionCounts: { position: string; count: number }[];
+};
+
+type GridCell = {
+  pick: number;
+  slot: number;
+  isMine: boolean;
+  player: BoardPlayer | null;
+};
+
+type AdpBoard = {
+  league: { id: number; name: string; teamCount: number };
+  boardType: string;
+  draftType: string;
+  rounds: number;
+  slot: number;
+  detectedSlot: number | null;
+  myPicks: number[];
+  boardSize: number;
+  roundTargets: RoundTarget[];
+  grid: { round: number; cells: GridCell[] }[];
+};
+
 const get = <T,>(path: string): Promise<T> =>
   fetch(`${API}${path}`).then((r) => {
     if (!r.ok) throw new Error(`${r.status} ${path}`);
@@ -559,11 +601,187 @@ function DraftAssistant({ leagueId }: { leagueId: number }) {
   );
 }
 
+
+const BAND_LABEL: Record<string, string> = {
+  likely: "LIKELY",
+  probable: "PROBABLE",
+  coinflip: "COIN FLIP",
+  unlikely: "UNLIKELY",
+  gone: "GONE",
+};
+
+function AdpBoardView({ leagueId }: { leagueId: number }) {
+  const [board, setBoard] = useState<AdpBoard | null>(null);
+  const [slot, setSlot] = useState<number | null>(null);
+  const [mode, setMode] = useState<"list" | "grid">("list");
+
+  // slot === null means "use whatever the platform says"; once the user drags the
+  // control it pins to their choice so they can compare positions.
+  useEffect(() => {
+    setBoard(null);
+    setSlot(null);
+  }, [leagueId]);
+
+  useEffect(() => {
+    const query = slot === null ? "" : `?slot=${slot}`;
+    get<AdpBoard>(`/api/leagues/${leagueId}/adp-board${query}`)
+      .then(setBoard)
+      .catch(() => setBoard(null));
+  }, [leagueId, slot]);
+
+  if (!board) return <div className="notice">Building board...</div>;
+
+  const teamCount = board.league.teamCount;
+
+  return (
+    <>
+      <div className="board-controls">
+        <div className="field">
+          <label htmlFor="slot">Draft slot</label>
+          <input
+            id="slot"
+            type="range"
+            min={1}
+            max={teamCount}
+            value={board.slot}
+            onChange={(e) => setSlot(Number(e.target.value))}
+          />
+          <span className="slot-value">
+            {board.slot}
+            <span className="of"> / {teamCount}</span>
+          </span>
+        </div>
+
+        <div className="view-toggle">
+          <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>
+            List
+          </button>
+          <button aria-pressed={mode === "grid"} onClick={() => setMode("grid")}>
+            Grid
+          </button>
+        </div>
+
+        <div className="board-meta">
+          {board.boardType} board &middot; {board.draftType} &middot; {teamCount} teams
+          <br />
+          {board.boardSize} players
+          {board.detectedSlot
+            ? ` · your slot is ${board.detectedSlot}`
+            : " · slot not published yet"}
+        </div>
+      </div>
+
+      {mode === "list" ? (
+        <div>
+          {board.roundTargets.map((round) => (
+            <div className="round-block" key={round.round}>
+              <div className="round-head">
+                <span className="rnum">R{round.round}</span>
+                <span className="pnum">
+                  pick {round.pick} &middot; {round.slotInRound} of {teamCount}
+                </span>
+                <span className="pos-counts">
+                  {round.positionCounts.map((pc) => (
+                    <span className="pos-count" key={pc.position}>
+                      <PositionChip position={pc.position} />
+                      <b>{pc.count}</b>
+                    </span>
+                  ))}
+                </span>
+              </div>
+              {round.targets.map((player) => (
+                <div className="target-row" key={player.sleeperId}>
+                  <div className="player">
+                    <PositionChip position={player.position} />
+                    <span className="player-name">{player.name}</span>
+                    <span className="pro-team">{player.proTeam ?? ""}</span>
+                  </div>
+                  <span className="target-figs">
+                    rank <b>{player.boardRank.toFixed(0)}</b>
+                    {player.adp ? ` · adp ${player.adp.toFixed(0)}` : ""} &middot; +
+                    {player.vorp.toFixed(0)} vorp
+                  </span>
+                  <span className="band" data-band={player.band}>
+                    {player.availability !== undefined
+                      ? `${Math.round(player.availability * 100)}%`
+                      : ""}{" "}
+                    {BAND_LABEL[player.band ?? ""] ?? ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="grid-scroll">
+            <table className="draft-grid">
+              <thead>
+                <tr>
+                  <th />
+                  {Array.from({ length: teamCount }, (_, i) => i + 1).map((n) => (
+                    <th key={n} className={n === board.slot ? "slot-mine" : undefined}>
+                      {n === board.slot ? `${n} YOU` : n}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {board.grid.map((row) => (
+                  <tr key={row.round}>
+                    <td className="rlabel">R{row.round}</td>
+                    {row.cells.map((cell) => (
+                      <td key={cell.pick}>
+                        <div
+                          className={`cell${cell.isMine ? " mine" : ""}${
+                            cell.player ? "" : " empty"
+                          }`}
+                          data-pos={cell.player?.position}
+                        >
+                          <div className="cname">
+                            {cell.player ? cell.player.name : "-"}
+                          </div>
+                          <div className="cmeta">
+                            {cell.pick}
+                            {cell.player ? ` · ${cell.player.position}` : ""}
+                          </div>
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="legend">
+            {["QB", "RB", "WR", "TE", "K", "DEF"].map((pos) => (
+              <span key={pos}>
+                <span
+                  className="swatch"
+                  style={{ background: `var(--pos-${pos.toLowerCase()})` }}
+                />
+                {pos}
+              </span>
+            ))}
+            <span>
+              <span
+                className="swatch"
+                style={{ background: "rgba(53,201,141,0.35)" }}
+              />
+              your picks
+            </span>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 export default function App() {
   const [leagues, setLeagues] = useState<League[] | null>(null);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"season" | "draft">("season");
+  const [view, setView] = useState<"season" | "draft" | "board">("season");
 
   useEffect(() => {
     get<League[]>("/api/leagues")
@@ -618,6 +836,12 @@ export default function App() {
           >
             Draft
           </button>
+          <button
+            aria-pressed={view === "board"}
+            onClick={() => setView("board")}
+          >
+            Board
+          </button>
         </div>
         <span className="spacer" />
         <span className="meta num">
@@ -643,7 +867,9 @@ export default function App() {
       </nav>
 
       <main className="panel">
-        {view === "draft" ? (
+        {view === "board" ? (
+          <AdpBoardView leagueId={active.id} />
+        ) : view === "draft" ? (
           <DraftAssistant leagueId={active.id} />
         ) : (
         <div className="columns">

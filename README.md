@@ -5,7 +5,8 @@ A fantasy football analytics application that pulls your teams from **Sleeper** 
 draft and the season.
 
 Status: ingestion, player identity resolution, the scoring engine, a web dashboard,
-and a live draft assistant are built and verified against the live APIs.
+a live draft assistant, and a per-league ADP heat map are built and verified against
+the live APIs.
 
 ## Running it
 
@@ -121,6 +122,57 @@ There is also a terminal version, useful as a second screen or a fallback:
 It picks the league whose draft has not finished, so during your ESPN draft it needs
 no arguments.
 
+## Planning the draft: the ADP board
+
+The **Board** tab answers the question you plan around: given your slot, who will still
+be there at each of your picks? Two views, both per league:
+
+- **List** — one block per round showing the players realistically available at that
+  pick, each with a probability that they last that long, plus a positional summary.
+- **Grid** — the full board, rounds x slots, with your snake path highlighted.
+
+A slot slider defaults to your real slot and lets you compare any other, which is useful
+before a draft order is drawn.
+
+The positional summary is the point. At slot 12 of 12 in a 12-team PPR league:
+
+```
+  rd  pick   what is realistically there
+  R1    12   RB7  WR2  TE1
+  R2    13   RB7  WR2  TE1
+  R6    61   WR6  RB4
+  R9   108   TE4  RB3  WR3
+```
+
+Running backs are thick at the turn while receivers stay available for six more rounds,
+so the scarce commodity is not the one the first two picks push you toward.
+
+### Every league gets its own board
+
+Three things make each board different, and all three are read from the league itself:
+
+| | Dynasty Beasts | Crone Panthers | NYC Fellas |
+|---|---|---|---|
+| Board | superflex | half-PPR | PPR |
+| Teams / type | 12, linear | 10, linear | 12, snake |
+| Your picks | 4, 16, 28, 40 | 6, 16, 26 | 12, 13, 36, 37 |
+
+The superflex board is a genuinely different board: Josh Allen, Jayden Daniels and Lamar
+Jackson occupy its first three slots, where the PPR board opens with Jahmyr Gibbs, Bijan
+Robinson and Ja'Marr Chase.
+
+Ordering comes from ESPN's format-specific rank rather than its ADP, because ADP
+saturates - 295 players share a single value near pick 170, which cannot order a
+16-round board. ADP is still shown where it discriminates. Availability is modelled as a
+normal distribution about a player's rank whose spread widens deeper into the draft;
+ESPN publishes no ADP standard deviation, so that spread is a calibrated heuristic
+rather than data.
+
+**Sleeper publishes no ADP.** Every candidate endpoint returns 404 or 500, and its
+`search_rank` field is not a draft board - 1,319 players tie at a sentinel value. So the
+Sleeper leagues' boards use ESPN's market with Sleeper's format, team count, draft type
+and your slot, not Sleeper drafters' actual behaviour.
+
 ### How it decides
 
 Players are ranked by **value over replacement**, not by projected points. In a league
@@ -185,7 +237,8 @@ backend/
   ingest/       leagues, players, drafts -> database
   resolve/      player_matching.py, stat_map.py (vendored ESPN stat ids)
   scoring/      rules.py — league scoring rules applied to raw stats
-  analysis/     draft.py (VORP, need, must-fill), board.py (live state)
+  analysis/     draft.py (VORP, need, must-fill), board.py (live state),
+                adp_board.py (ADP board, pick math, availability)
   api/routes.py FastAPI, also serves the built frontend
   db.py         SQLite schema
   cli.py        command line entry point
@@ -197,6 +250,7 @@ tests/          regression tests, every case drawn from a real API failure
 
 - [x] **Phase 1** — ingestion, player matching, scoring engine
 - [x] **Phase 2** — live draft assistant (best available, VORP, positional need)
+- [x] **Draft ADP heat map** — per-league board, list and grid views, slot what-if
 - [x] **Phase 3** — unified season dashboard (React)
 - [ ] **Phase 4** — start/sit lineup optimizer
 - [ ] **Phase 5** — waiver wire and trade analysis

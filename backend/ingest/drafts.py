@@ -87,6 +87,32 @@ def _replace_picks(session: Session, draft: Draft, picks: list[dict[str, Any]]) 
 # --- Sleeper ---------------------------------------------------------------
 
 
+def _sleeper_draft_order(
+    client: SleeperClient, league: League, raw: dict[str, Any]
+) -> dict[str, str]:
+    """Map draft slot to roster id.
+
+    Sleeper keys draft_order by user id, but every other table in this app keys teams
+    by roster id, so it is translated here rather than at every read site.
+    """
+    order = raw.get("draft_order") or {}
+    if not order:
+        return {}
+
+    owner_to_roster = {
+        str(roster.get("owner_id")): str(roster.get("roster_id"))
+        for roster in client.rosters(league.platform_league_id)
+        if roster.get("owner_id") and roster.get("roster_id") is not None
+    }
+
+    resolved: dict[str, str] = {}
+    for user_id, slot in order.items():
+        roster_id = owner_to_roster.get(str(user_id))
+        if roster_id is not None:
+            resolved[str(slot)] = roster_id
+    return resolved
+
+
 def sync_sleeper_drafts(
     session: Session,
     client: SleeperClient,
@@ -113,6 +139,11 @@ def sync_sleeper_drafts(
             season=str(raw.get("season") or league.season),
             start_time=start_time,
         )
+
+        order = _sleeper_draft_order(client, league, raw)
+        if order:
+            draft.draft_order = order
+            session.flush()
 
         picks = []
         for pick in client.draft_picks(draft.platform_draft_id):
@@ -164,15 +195,15 @@ def sync_espn_draft(
     """
     payload = client.draft(league.platform_league_id, league.season)
     detail = payload.get("draftDetail") or {}
+    all_picks = detail.get("picks") or []
 
     # ESPN pre-populates the entire draft grid before anyone picks: a 12-team, 16-round
     # league returns 192 "picks" that all carry playerId -1. Those describe the pick
-    # order, not selections, and must not be stored as real picks.
-    raw_picks = [
-        pick
-        for pick in (detail.get("picks") or [])
-        if (pick.get("playerId") or -1) > 0
-    ]
+    # order, not selections, and must not be stored as real picks - but their teamIds
+    # are the draft order, which is exactly what a slot-based board needs.
+    order = _espn_draft_order(all_picks)
+
+    raw_picks = [pick for pick in all_picks if (pick.get("playerId") or -1) > 0]
 
     if detail.get("inProgress"):
         status = STATUS_DRAFTING
@@ -189,9 +220,12 @@ def sync_espn_draft(
         platform_draft_id=f"{league.platform_league_id}-{league.season}",
         status=status,
         draft_type="auction" if any(p.get("bidAmount") for p in raw_picks) else "snake",
-        rounds=max((p.get("roundId") or 0) for p in raw_picks) if raw_picks else None,
+        rounds=_espn_rounds(all_picks, raw_picks),
         season=league.season,
     )
+    if order:
+        draft.draft_order = order
+        session.flush()
 
     if not raw_picks and status == STATUS_PRE_DRAFT:
         # Record the draft as pending and clear anything stale, so a board left over
@@ -235,6 +269,35 @@ def sync_espn_draft(
         len(picks),
     )
     return draft
+
+
+def _espn_draft_order(picks: list[dict[str, Any]]) -> dict[str, str]:
+    """Map draft slot to team id, read from round one of ESPN's grid.
+
+    Round one's pick order *is* the draft order, whether the entries are real picks or
+    the placeholders ESPN publishes beforehand. That makes a slot known before a draft
+    starts, which is when planning around it actually matters.
+    """
+    order: dict[str, str] = {}
+    for pick in picks:
+        if pick.get("roundId") != 1:
+            continue
+        slot = pick.get("roundPickNumber")
+        team_id = pick.get("teamId")
+        if slot is None or team_id is None:
+            continue
+        order[str(slot)] = str(team_id)
+    return order
+
+
+def _espn_rounds(
+    all_picks: list[dict[str, Any]], raw_picks: list[dict[str, Any]]
+) -> int | None:
+    """Total rounds, preferring the full grid so it is known before the draft."""
+    source = all_picks or raw_picks
+    if not source:
+        return None
+    return max((p.get("roundId") or 0) for p in source) or None
 
 
 def _resolve_espn_player_id(

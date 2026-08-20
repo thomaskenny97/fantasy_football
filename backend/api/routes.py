@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.analysis.adp_board import heat_map
 from backend.analysis.board import draft_state
 from backend.clients.espn import EspnClient, EspnError
 from backend.clients.sleeper import SleeperClient, SleeperError
@@ -309,6 +310,31 @@ def draft_assistant(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         state["refreshed"] = refreshed
         return state
+
+
+@app.get("/api/leagues/{league_id}/adp-board")
+def adp_board(
+    league_id: int,
+    slot: int | None = None,
+    rounds: int | None = None,
+    per_round: int = 10,
+) -> dict[str, Any]:
+    """Per-round draft targets and the projected board grid.
+
+    `slot` overrides the detected draft slot so different positions can be compared
+    before an order is drawn. Database only - no network on a page load.
+    """
+    with _session() as session:
+        try:
+            return heat_map(
+                session,
+                league_id,
+                slot=slot,
+                rounds=rounds,
+                per_round=max(1, min(per_round, 30)),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # --- static frontend -------------------------------------------------------
