@@ -125,11 +125,13 @@ no arguments.
 ## Planning the draft: the ADP board
 
 The **Board** tab answers the question you plan around: given your slot, who will still
-be there at each of your picks? Two views, both per league:
+be there at each of your picks? Three views, all per league:
 
 - **List** — one block per round showing the players realistically available at that
   pick, each with a probability that they last that long, plus a positional summary.
 - **Grid** — the full board, rounds x slots, with your snake path highlighted.
+- **Players** — every player in board order with a rule at each round boundary, each row
+  lit by how well it lines up with a pick you actually own.
 
 A slot slider defaults to your real slot and lets you compare any other, which is useful
 before a draft order is drawn.
@@ -146,6 +148,35 @@ The positional summary is the point. At slot 12 of 12 in a 12-team PPR league:
 
 Running backs are thick at the turn while receivers stay available for six more rounds,
 so the scarce commodity is not the one the first two picks push you toward.
+
+### Reading the Players view
+
+A row glows when its board position sits on one of your picks: take the player earlier
+and you reached, wait for your next pick and they are gone. Rows recede as they drift
+away from anything you own.
+
+That is what exposes a seat's **dead zone**. At slot 12 of a 12-team snake you pick at
+12, 13, 36 and 37, so players around board position 22-24 line up with nothing - a reach
+at 13, long gone by 36:
+
+```
+  12  James Cook        RB   ON YOUR PICK 12     <- your pick
+  13  Ashton Jeanty     RB   ON YOUR PICK 13     <- your pick
+  17  Trey McBride      TE   REACHABLE    13
+  19  Derrick Henry     RB   LONG SHOT    13
+  22  Omarion Hampton   RB   DEAD ZONE
+  23  Breece Hall       RB   DEAD ZONE
+  36  Josh Allen        QB   ON YOUR PICK 36     <- your pick
+```
+
+Move the slot slider and the whole pattern shifts, because a different seat owns
+different picks. On a **linear** draft slot 12 owns 12, 24, 36 and 48, so every twelfth
+player lights up and there is no dead zone at all.
+
+Positions are scored by where a player sits on *this league's* board, not by their global
+ESPN rank. The two are the same in a fresh redraft league and diverge completely in a
+dynasty league, where the best available free agent may be ranked 150th overall yet go
+first in this draft.
 
 ### Every league gets its own board
 

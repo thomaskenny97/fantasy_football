@@ -14,6 +14,8 @@ from backend.analysis.adp_board import (
     heat_band,
     pick_numbers,
     rank_type_for,
+    target_band,
+    target_score,
 )
 
 
@@ -172,3 +174,72 @@ def test_board_rank_handles_missing_data():
     assert board_rank_from(None, FakeLeague(STANDARD)) is None
     assert board_rank_from({}, FakeLeague(STANDARD)) is None
     assert board_rank_from({"PPR": {}}, FakeLeague(STANDARD)) is None
+
+
+# --- target scoring for the all-players list -------------------------------
+
+
+def test_linear_slot_12_lights_up_every_twelfth_pick():
+    """The intuition the feature was asked for, on a linear draft.
+
+    At slot 12 of a 12-team linear draft you pick at 12, 24, 36, 48 - so players
+    ranked there are exactly the ones you can get.
+    """
+    picks = pick_numbers(12, 12, 6, "linear")
+    assert picks[:4] == [12, 24, 36, 48]
+    for rank in (12, 24, 36, 48):
+        score, best = target_score(rank, picks)
+        assert score == pytest.approx(1.0, abs=1e-6)
+        assert best == rank
+        assert target_band(score) == "prime"
+
+
+def test_snake_slot_12_creates_a_real_dead_zone():
+    """The same seat on a snake behaves completely differently.
+
+    Slot 12 snakes to 12, 13, 36, 37 - so a player ranked around 24 lines up with
+    nothing: a reach at 13 and long gone by 36. That gap is real, and showing it is
+    the point of the view.
+    """
+    picks = pick_numbers(12, 12, 6, "snake")
+    assert picks[:4] == [12, 13, 36, 37]
+
+    on_pick, _ = target_score(12, picks)
+    dead, _ = target_score(24, picks)
+
+    assert target_band(on_pick) == "prime"
+    assert target_band(dead) == "dead"
+    assert dead < on_pick
+
+
+def test_target_score_peaks_exactly_on_a_pick():
+    picks = [12, 13, 36, 37]
+    peak, _ = target_score(36, picks)
+    near, _ = target_score(33, picks)
+    far, _ = target_score(25, picks)
+    assert peak > near > far
+
+
+def test_target_window_widens_later_in_the_draft():
+    """Deep picks are less predictable, so the band around them is more forgiving."""
+    early_off_by_five, _ = target_score(17, [12])
+    late_off_by_five, _ = target_score(125, [120])
+    assert late_off_by_five > early_off_by_five
+
+
+def test_target_score_reports_which_pick_it_matched():
+    picks = [12, 13, 36, 37, 60, 61]
+    _, best = target_score(59, picks)
+    assert best == 60
+
+
+def test_target_score_handles_empty_inputs():
+    assert target_score(10, []) == (0.0, None)
+    assert target_score(0, [12]) == (0.0, None)
+
+
+def test_target_bands_cover_the_range():
+    assert target_band(0.95) == "prime"
+    assert target_band(0.40) == "good"
+    assert target_band(0.10) == "fringe"
+    assert target_band(0.01) == "dead"

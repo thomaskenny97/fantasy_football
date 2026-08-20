@@ -133,6 +133,16 @@ type GridCell = {
   player: BoardPlayer | null;
 };
 
+type ListPlayer = BoardPlayer & {
+  boardSlot: number;
+  round: number;
+  targetScore: number;
+  targetBand: string;
+  bestPick: number | null;
+  availabilityAtBestPick: number | null;
+  onMyPick: boolean;
+};
+
 type AdpBoard = {
   league: { id: number; name: string; teamCount: number };
   boardType: string;
@@ -144,6 +154,7 @@ type AdpBoard = {
   boardSize: number;
   roundTargets: RoundTarget[];
   grid: { round: number; cells: GridCell[] }[];
+  players: ListPlayer[];
 };
 
 const get = <T,>(path: string): Promise<T> =>
@@ -610,10 +621,126 @@ const BAND_LABEL: Record<string, string> = {
   gone: "GONE",
 };
 
+
+const TARGET_LABEL: Record<string, string> = {
+  prime: "ON YOUR PICK",
+  good: "REACHABLE",
+  fringe: "LONG SHOT",
+  dead: "DEAD ZONE",
+};
+
+function AllPlayersList({ board }: { board: AdpBoard }) {
+  const teamCount = board.league.teamCount;
+
+  // Group into rounds so a rule can be drawn at each boundary, the way a real
+  // board reads.
+  const rounds: { round: number; players: ListPlayer[] }[] = [];
+  for (const player of board.players) {
+    const last = rounds[rounds.length - 1];
+    if (!last || last.round !== player.round) {
+      rounds.push({ round: player.round, players: [player] });
+    } else {
+      last.players.push(player);
+    }
+  }
+
+  return (
+    <>
+      <div className="players-list">
+        {rounds.map((row) => {
+          const mine = board.myPicks.filter(
+            (pick) =>
+              pick > (row.round - 1) * teamCount && pick <= row.round * teamCount
+          );
+          return (
+            <div key={row.round}>
+              <div className="round-rule">
+                <span>Round {row.round}</span>
+                <span>
+                  picks {(row.round - 1) * teamCount + 1}&ndash;
+                  {row.round * teamCount}
+                </span>
+                <span className="picks">
+                  {mine.length ? (
+                    <>
+                      yours: <b>{mine.join(", ")}</b>
+                    </>
+                  ) : (
+                    "no pick of yours"
+                  )}
+                </span>
+              </div>
+              {row.players.map((player) => (
+                <div
+                  className={`prow${player.onMyPick ? " on-pick" : ""}`}
+                  data-target={player.targetBand}
+                  key={player.sleeperId}
+                >
+                  <span className="bslot">{player.boardSlot}</span>
+                  <div className="player">
+                    <PositionChip position={player.position} />
+                    <span className="player-name">{player.name}</span>
+                    <span className="pro-team">{player.proTeam ?? ""}</span>
+                  </div>
+                  <span className="pfigs">
+                    rank <b>{player.boardRank.toFixed(0)}</b>
+                    {player.adp ? ` · adp ${player.adp.toFixed(0)}` : ""} &middot; +
+                    {player.vorp.toFixed(0)} vorp
+                  </span>
+                  <span className="ptarget">
+                    {player.bestPick && player.targetBand !== "dead"
+                      ? `${TARGET_LABEL[player.targetBand]} ${player.bestPick}`
+                      : TARGET_LABEL[player.targetBand]}
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="list-legend">
+        <span>
+          <span
+            className="chipbox"
+            style={{
+              background: "rgba(53,201,141,0.13)",
+              borderLeftColor: "var(--live)",
+            }}
+          />
+          on a pick you own
+        </span>
+        <span>
+          <span
+            className="chipbox"
+            style={{
+              background: "rgba(53,201,141,0.05)",
+              borderLeftColor: "rgba(53,201,141,0.4)",
+            }}
+          />
+          reachable
+        </span>
+        <span>
+          <span className="chipbox" style={{ background: "transparent" }} />
+          long shot
+        </span>
+        <span style={{ opacity: 0.42 }}>
+          <span className="chipbox" style={{ background: "transparent" }} />
+          dead zone &mdash; gone before your next pick, a reach at your last
+        </span>
+        <span style={{ marginLeft: "auto" }}>
+          your picks: {board.myPicks.slice(0, 8).join(", ")}
+          {board.myPicks.length > 8 ? "..." : ""}
+        </span>
+      </div>
+    </>
+  );
+}
+
 function AdpBoardView({ leagueId }: { leagueId: number }) {
   const [board, setBoard] = useState<AdpBoard | null>(null);
   const [slot, setSlot] = useState<number | null>(null);
-  const [mode, setMode] = useState<"list" | "grid">("list");
+  const [mode, setMode] = useState<"list" | "grid" | "players">("list");
 
   // slot === null means "use whatever the platform says"; once the user drags the
   // control it pins to their choice so they can compare positions.
@@ -659,6 +786,12 @@ function AdpBoardView({ leagueId }: { leagueId: number }) {
           <button aria-pressed={mode === "grid"} onClick={() => setMode("grid")}>
             Grid
           </button>
+          <button
+            aria-pressed={mode === "players"}
+            onClick={() => setMode("players")}
+          >
+            Players
+          </button>
         </div>
 
         <div className="board-meta">
@@ -671,7 +804,9 @@ function AdpBoardView({ leagueId }: { leagueId: number }) {
         </div>
       </div>
 
-      {mode === "list" ? (
+      {mode === "players" ? (
+        <AllPlayersList board={board} />
+      ) : mode === "list" ? (
         <div>
           {board.roundTargets.map((round) => (
             <div className="round-block" key={round.round}>

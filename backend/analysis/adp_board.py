@@ -27,7 +27,7 @@ import logging
 import math
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -139,6 +139,52 @@ def availability(rank: float, pick: int) -> float:
     return max(0.0, min(1.0, 1.0 - 0.5 * (1.0 + math.erf(z))))
 
 
+# How strongly a player's board rank has to line up with one of your picks before
+# the row lights up. High to low.
+TARGET_BANDS: tuple[tuple[float, str], ...] = (
+    (0.60, "prime"),
+    (0.25, "good"),
+    (0.05, "fringe"),
+    (0.0, "dead"),
+)
+
+
+def target_score(rank: float, picks: Sequence[int]) -> tuple[float, int | None]:
+    """How well a player's board rank lines up with any of your own picks.
+
+    Returns (score in 0..1, the pick it lines up with).
+
+    A player is most gettable when their rank sits right on one of your picks: take
+    them earlier and you reached, wait for your next pick and they are gone. Score
+    therefore peaks where rank equals a pick and falls away on both sides, with the
+    window widening later in the draft because deep picks are far less predictable.
+
+    This is what exposes a slot's dead zones. At slot 12 of a 12-team snake you pick
+    at 12, 13, 36 and 37, so players ranked around 24 line up with nothing you own -
+    a reach at 13 and long gone by 36. That gap is real, and it is the reason the
+    same board looks completely different from a different seat.
+    """
+    if rank <= 0 or not picks:
+        return 0.0, None
+
+    best_score = 0.0
+    best_pick: int | None = None
+    for pick in picks:
+        width = max(3.5, 0.18 * pick)
+        score = math.exp(-(((rank - pick) / width) ** 2))
+        if score > best_score:
+            best_score = score
+            best_pick = pick
+    return best_score, best_pick
+
+
+def target_band(score: float) -> str:
+    for threshold, name in TARGET_BANDS:
+        if score >= threshold:
+            return name
+    return "dead"
+
+
 def heat_band(probability: float) -> str:
     for threshold, name in HEAT_BANDS:
         if probability >= threshold:
@@ -152,7 +198,12 @@ class BoardPlayer:
     name: str
     position: str
     pro_team: str | None
+    # The player's ESPN market rank, kept for display.
     board_rank: float
+    # Their position on THIS league's draftable board, which is what actually
+    # predicts when they go. The two diverge sharply in keeper and dynasty leagues:
+    # the best free agent may be globally ranked 150th yet go first overall here.
+    board_slot: int
     points: float
     vorp: float
     adp: float | None
@@ -229,6 +280,7 @@ def _board(session: Session, league: League) -> list[BoardPlayer]:
                 position=player.position or "",
                 pro_team=player.pro_team,
                 board_rank=float(projection.board_rank),
+                board_slot=0,  # assigned once the board is ordered
                 points=projection.points,
                 vorp=round(projection.points - baseline, 1),
                 adp=projection.adp,
@@ -236,6 +288,8 @@ def _board(session: Session, league: League) -> list[BoardPlayer]:
         )
 
     board.sort(key=lambda p: p.board_rank)
+    for index, player in enumerate(board, start=1):
+        player.board_slot = index
     return board
 
 
@@ -252,7 +306,7 @@ def _player_payload(player: BoardPlayer, pick: int | None = None) -> dict[str, A
         "adp": player.adp if (player.adp and player.adp < 165) else None,
     }
     if pick is not None:
-        probability = availability(player.board_rank, pick)
+        probability = availability(player.board_slot, pick)
         payload["availability"] = round(probability, 3)
         payload["band"] = heat_band(probability)
     return payload
@@ -348,6 +402,33 @@ def heat_map(
             )
         grid.append({"round": rnd, "cells": cells})
 
+    # --- flat board, every player, annotated for this slot -----------------
+    # Round is derived from board position rather than the player's own rank, so the
+    # dividers land every `team_count` rows exactly as a real board reads.
+    pick_set = set(picks)
+    all_players: list[dict[str, Any]] = []
+    for player in board:
+        position_on_board = player.board_slot
+        score, best_pick = target_score(player.board_slot, picks)
+        payload = _player_payload(player)
+        payload.update(
+            {
+                "boardSlot": position_on_board,
+                "round": ((position_on_board - 1) // team_count) + 1,
+                "targetScore": round(score, 3),
+                "targetBand": target_band(score),
+                "bestPick": best_pick,
+                "availabilityAtBestPick": (
+                    round(availability(player.board_slot, best_pick), 3)
+                    if best_pick
+                    else None
+                ),
+                # True when the player sits exactly on one of your picks.
+                "onMyPick": position_on_board in pick_set,
+            }
+        )
+        all_players.append(payload)
+
     return {
         "league": {
             "id": league.id,
@@ -365,4 +446,5 @@ def heat_map(
         "boardSize": len(board),
         "roundTargets": round_rows,
         "grid": grid,
+        "players": all_players,
     }
