@@ -128,7 +128,10 @@ def draft_state(session: Session, league_id: int, limit: int = 12) -> dict[str, 
         select(Draft).where(Draft.league_id == league_id)
     ).scalars().first()
 
+    from backend.analysis.adp_board import personal_ranks
+
     team = _my_team(session, league_id)
+    my_ranks = personal_ranks(session, league_id)
     taken = _taken_player_ids(session, league, draft)
     full_pool = _available_players(session, league, set())
     available = [p for p in full_pool if p.sleeper_id not in taken]
@@ -273,6 +276,7 @@ def draft_state(session: Session, league_id: int, limit: int = 12) -> dict[str, 
                 "needTier": r.need_tier,
                 "adp": r.player.adp,
                 "adpDelta": r.adp_delta,
+                "myRank": my_ranks.get(r.player.sleeper_id),
                 "auctionValue": r.player.auction_value,
                 "reasons": r.reasons,
             }

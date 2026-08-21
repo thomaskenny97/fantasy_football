@@ -268,6 +268,31 @@ class Projection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class PersonalRank(Base):
+    """The user's own ranking of a player, within one league.
+
+    Rankings are per league because a board is per league: a superflex league values
+    quarterbacks nothing like a PPR league does, so one global list would be wrong for
+    at least two of the three. Rows exist only where the user has actually saved an
+    order - an empty table means "use the market board".
+    """
+
+    __tablename__ = "personal_rank"
+    __table_args__ = (
+        UniqueConstraint("league_id", "sleeper_id", name="uq_personal_rank"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("league.id"), index=True)
+    sleeper_id: Mapped[str] = mapped_column(
+        ForeignKey("player.sleeper_id"), index=True
+    )
+
+    # 1-based position in the user's list.
+    rank: Mapped[int] = mapped_column(Integer, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 def make_engine(db_path: str | None = None, echo: bool = False):
     path = db_path or str(DB_PATH)
     return create_engine(f"sqlite:///{path}", echo=echo, future=True)

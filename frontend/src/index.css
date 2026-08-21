@@ -1073,3 +1073,458 @@ table.draft-grid .rlabel {
   vertical-align: -1px;
   border-left: 3px solid transparent;
 }
+
+/* --- personal rankings ----------------------------------------------------
+   A working list you reorder by hand. The market board is always visible
+   alongside, because the value of your own ranking is the disagreement. */
+
+.rank-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: var(--ink-700);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.rank-bar .state {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.rank-bar .state.dirty {
+  color: var(--pending);
+}
+
+.btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.btn.primary {
+  border-color: var(--live);
+  color: var(--live);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: rgba(53, 201, 141, 0.12);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rank-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.rrow {
+  display: grid;
+  grid-template-columns: 18px 40px 1fr auto auto 46px;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 3px solid transparent;
+  background: var(--ink-800);
+  cursor: grab;
+}
+
+.rrow:last-child {
+  border-bottom: none;
+}
+
+.rrow:active {
+  cursor: grabbing;
+}
+
+/* Position tint carries over from the rest of the app. */
+.rrow[data-target="prime"] {
+  background: rgba(53, 201, 141, 0.11);
+  border-left-color: var(--live);
+}
+
+.rrow[data-target="good"] {
+  border-left-color: rgba(53, 201, 141, 0.35);
+}
+
+.rrow[data-target="dead"] {
+  opacity: 0.55;
+}
+
+.rrow.dragging {
+  opacity: 0.35;
+}
+
+/* Where the dragged row will land. */
+.rrow.drop-above {
+  box-shadow: inset 0 2px 0 var(--live);
+}
+
+.rrow.drop-below {
+  box-shadow: inset 0 -2px 0 var(--live);
+}
+
+.grip {
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1;
+  user-select: none;
+  text-align: center;
+}
+
+.rrow .myrank {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rrow .market {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Disagreement with the market: the reason to keep your own list at all. */
+.delta {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  min-width: 40px;
+  text-align: right;
+}
+
+.delta.up {
+  color: var(--live);
+}
+
+.delta.down {
+  color: var(--pos-def);
+}
+
+.delta.same {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.nudge {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nudge button {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 8px;
+  line-height: 1;
+  padding: 2px 5px;
+}
+
+.nudge button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.nudge button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* myRank shown alongside the market rank on the other pages. */
+.myrank-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--pos-te);
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  padding: 0 4px;
+  flex: none;
+  white-space: nowrap;
+}
+
+.show-more {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+}
+
+/* --- mock drafts ----------------------------------------------------------
+   Results are cards because they are meant to be compared side by side: the
+   question is never "is this roster good" but "is it better than the one the
+   other strategy produced". */
+
+.mock-controls {
+  display: flex;
+  align-items: flex-start;
+  gap: 22px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  background: var(--ink-700);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.mock-controls .group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mock-controls .group > label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.chip-toggle {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 5px 10px;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.chip-toggle:hover {
+  color: var(--text);
+}
+
+.chip-toggle[aria-pressed="true"] {
+  background: var(--ink-600);
+  border-color: var(--live);
+  color: var(--text);
+}
+
+.mock-controls select,
+.mock-controls input[type="number"] {
+  background: var(--ink-800);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+.mock-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 12px;
+}
+
+.mock-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--ink-800);
+  overflow: hidden;
+}
+
+.mock-card.best {
+  border-color: var(--live);
+}
+
+.mock-card header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 11px;
+  background: var(--ink-700);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.mock-card header .slotno {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.mock-card header .strat {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mock-card header .pts {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.mock-card.best header .pts {
+  color: var(--live);
+}
+
+.mock-row {
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 11px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.mock-row:last-child {
+  border-bottom: none;
+}
+
+.mock-row .mslot {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.mock-row .mname {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mock-row .mpts {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* --- live mock ------------------------------------------------------------ */
+
+.live-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+  gap: 24px;
+}
+
+@media (max-width: 900px) {
+  .live-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.pickable {
+  display: grid;
+  grid-template-columns: 34px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 3px solid transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pickable:hover:not(:disabled) {
+  background: var(--ink-700);
+  border-left-color: var(--live);
+}
+
+.pickable:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pickable .rk {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.pickable .fig {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.pick-feed {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.feed-row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+
+.feed-row:last-child {
+  border-bottom: none;
+}
+
+.feed-row.mine {
+  background: rgba(53, 201, 141, 0.1);
+}
+
+.feed-row .fno {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.feed-row.mine .fno {
+  color: var(--live);
+}
+
+.rank-bar .state.ok {
+  color: var(--live);
+}

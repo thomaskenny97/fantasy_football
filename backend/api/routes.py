@@ -13,13 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.analysis.adp_board import heat_map
+from backend.analysis import mock as mock_service
+from backend.analysis import rankings as rankings_service
+from backend.analysis.adp_board import detect_slot, heat_map, pick_numbers
 from backend.analysis.board import draft_state
 from backend.clients.espn import EspnClient, EspnError
 from backend.clients.sleeper import SleeperClient, SleeperError
@@ -47,7 +50,7 @@ app = FastAPI(title="Fantasy Football", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "PUT", "POST"],
     allow_headers=["*"],
 )
 
@@ -335,6 +338,126 @@ def adp_board(
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+class MockRequest(BaseModel):
+    """Which mocks to run. Omitting slots runs every slot in the league."""
+
+    slots: list[int] | None = None
+    strategies: list[str] | None = None
+    runsPerCombo: int = Field(default=1, ge=1, le=5)
+    seed: int | None = None
+
+
+class MockAdvance(BaseModel):
+    """One step of an interactive mock.
+
+    The client holds the pick list and sends it back each turn, so the server keeps no
+    session state and a mock survives a page reload.
+    """
+
+    mySlot: int
+    seed: int
+    strategy: str = mock_service.BALANCED
+    picks: list[dict[str, Any]] = Field(default_factory=list)
+    myPickId: str | None = None
+
+
+class RankingOrder(BaseModel):
+    """The complete ordered list of player ids, best first."""
+
+    order: list[str] = Field(default_factory=list)
+
+
+def _picks_for(session: Session, league: League, slot: int | None) -> list[int]:
+    """The user's pick numbers, so a ranking can be coloured by what they can get."""
+    draft = session.execute(
+        select(Draft).where(Draft.league_id == league.id)
+    ).scalars().first()
+    team_count = league.total_rosters or 12
+    total_rounds = (draft.rounds if draft and draft.rounds else None) or len(
+        [s for s in (league.roster_positions or []) if s != "IR"]
+    ) or 15
+    active = slot or detect_slot(session, league) or 1
+    return pick_numbers(active, team_count, total_rounds, draft.draft_type if draft else None)
+
+
+@app.get("/api/leagues/{league_id}/rankings")
+def get_rankings(league_id: int, slot: int | None = None) -> dict[str, Any]:
+    """The user's ranking for a league, seeded from the market board if unset."""
+    with _session() as session:
+        league = session.get(League, league_id)
+        if league is None:
+            raise HTTPException(status_code=404, detail="league not found")
+        picks = _picks_for(session, league, slot)
+        try:
+            return rankings_service.ranking_board(session, league_id, picks=picks)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/api/leagues/{league_id}/rankings")
+def put_rankings(league_id: int, body: RankingOrder) -> dict[str, Any]:
+    """Replace the ranking with the order the client is showing."""
+    if not body.order:
+        raise HTTPException(status_code=400, detail="order must not be empty")
+    with _session() as session:
+        try:
+            saved = rankings_service.save_order(session, league_id, body.order)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"saved": saved, "isCustom": True}
+
+
+@app.post("/api/leagues/{league_id}/rankings/reset")
+def reset_rankings(league_id: int) -> dict[str, Any]:
+    """Discard the personal ranking and fall back to the market board."""
+    with _session() as session:
+        removed = rankings_service.reset(session, league_id)
+        return {"removed": removed, "isCustom": False}
+
+
+@app.get("/api/mock/strategies")
+def mock_strategies() -> list[dict[str, str]]:
+    return [
+        {"key": key, "label": label}
+        for key, label in mock_service.STRATEGIES.items()
+    ]
+
+
+@app.post("/api/leagues/{league_id}/mock/simulate")
+def simulate_mocks(league_id: int, body: MockRequest) -> dict[str, Any]:
+    """Run a batch of mock drafts and return the finished teams."""
+    with _session() as session:
+        try:
+            return mock_service.run_mocks(
+                session,
+                league_id,
+                slots=body.slots,
+                strategies=body.strategies,
+                runs_per_combo=body.runsPerCombo,
+                seed=body.seed,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/leagues/{league_id}/mock/advance")
+def advance_mock(league_id: int, body: MockAdvance) -> dict[str, Any]:
+    """Apply the user's pick, then run the field to their next turn."""
+    with _session() as session:
+        try:
+            return mock_service.advance(
+                session,
+                league_id,
+                my_slot=body.mySlot,
+                seed=body.seed,
+                taken=body.picks,
+                my_pick_id=body.myPickId,
+                strategy=body.strategy,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # --- static frontend -------------------------------------------------------

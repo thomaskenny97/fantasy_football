@@ -178,6 +178,76 @@ ESPN rank. The two are the same in a fresh redraft league and diverge completely
 dynasty league, where the best available free agent may be ranked 150th overall yet go
 first in this draft.
 
+## Your own rankings
+
+The **Rankings** tab is your board, not the market's. Drag a row to move a player, or
+use the arrows on each row - the arrows exist because native drag and drop is not
+keyboard accessible, and a ranking you cannot edit without a mouse is a ranking you will
+not maintain.
+
+Each row shows where the market has the player and how far you disagree:
+
+```
+  1  CeeDee Lamb        WR   mkt 9 · adp 12 · +106   +8
+  2  Jahmyr Gibbs       RB   mkt 1 · adp 2  · +179   -1
+```
+
+Nothing is written until you press Save, and Reset drops your list and falls back to the
+market board. A league you have never touched simply follows the market, so there is no
+setup step.
+
+Rankings are **per league**, because a board is per league - a superflex ranking and a
+PPR ranking are different lists, and one global order would be wrong for most of your
+leagues at once. Editing one league never touches another.
+
+Once saved, your rank appears as a `YOU n` tag beside the market rank everywhere it
+matters: the Board list, the Players list, and the live draft assistant's
+recommendations. That is the point - seeing your number next to consensus is what tells
+you whether a player at their ADP is a bargain or a trap.
+
+## Mock drafts
+
+The **Mock** tab runs the draft rather than describing it. Two modes.
+
+**Quick sim** drafts a whole board and hands back the finished team. Pick which
+strategies to try and whether to run from your slot or all of them, press Generate, and
+compare the rosters side by side. A full 12-slot batch takes well under a second.
+
+```
+  Balanced       Jonathan Taylor(RB) + Drake London(WR)     starters 1972
+  RB-RB start    De'Von Achane(RB)   + Jeremiyah Love(RB)   starters 2074
+  WR-WR start    Drake London(WR)    + Rashee Rice(WR)      starters 1980
+  RB-WR start    James Cook(RB)      + Drake London(WR)     starters 1997
+```
+
+**Draft vs computers** puts you on the clock. Eleven bots draft around you, you take
+whoever you like, and they run forward to your next pick. The server keeps no session
+state - the page holds the pick list and sends it back - so a mock survives a reload.
+
+### How the field behaves
+
+Each player's draft position is drawn **once per simulation**, not once per pick. A real
+draft has a shape: this is the year a player slid, this is the year he did not.
+Re-rolling at every pick would average those away into a draft that never happens, so
+each run fixes one plausible ordering and plays it forward. That is why two runs of the
+same strategy come back different.
+
+Rivals draft the market board with noise and are handed varied strategies of their own,
+so the field is not twelve copies of the same team. Your team drafts **your rankings**
+with noticeably less noise - your opinions should mostly win, while still leaving room
+to be surprised. Set nothing in Rankings and your picks simply follow the market.
+
+Every simulated team obeys the same must-fill rule as the live assistant, so rosters
+finish able to field a legal lineup rather than ending up without a kicker.
+
+### What it cannot tell you
+
+Run-to-run variance is comparable to the difference between draft slots, so a handful of
+runs will not establish that one seat is better than another - across three runs a
+single slot swung 135 points while the spread between slots was about the same. Use it
+to compare **roster shapes** and see what a strategy actually produces, not to rank
+slots. Turn the runs up if you want a stable average.
+
 ### Every league gets its own board
 
 Three things make each board different, and all three are read from the league itself:
@@ -269,7 +339,8 @@ backend/
   resolve/      player_matching.py, stat_map.py (vendored ESPN stat ids)
   scoring/      rules.py — league scoring rules applied to raw stats
   analysis/     draft.py (VORP, need, must-fill), board.py (live state),
-                adp_board.py (ADP board, pick math, availability)
+                adp_board.py (ADP board, pick math, availability),
+                rankings.py (personal rankings), mock.py (mock drafts)
   api/routes.py FastAPI, also serves the built frontend
   db.py         SQLite schema
   cli.py        command line entry point
@@ -282,6 +353,8 @@ tests/          regression tests, every case drawn from a real API failure
 - [x] **Phase 1** — ingestion, player matching, scoring engine
 - [x] **Phase 2** — live draft assistant (best available, VORP, positional need)
 - [x] **Draft ADP heat map** — per-league board, list and grid views, slot what-if
+- [x] **Personal rankings** — drag-and-drop, per league, surfaced across the other views
+- [x] **Mock drafts** — stochastic batch sim by strategy and slot, plus a live mock vs bots
 - [x] **Phase 3** — unified season dashboard (React)
 - [ ] **Phase 4** — start/sit lineup optimizer
 - [ ] **Phase 5** — waiver wire and trade analysis

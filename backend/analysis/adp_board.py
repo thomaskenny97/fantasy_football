@@ -39,7 +39,7 @@ from backend.analysis.board import (
     _taken_player_ids,
 )
 from backend.analysis.draft import replacement_levels
-from backend.db import Draft, League, Player, Projection
+from backend.db import Draft, League, PersonalRank, Player, Projection
 
 log = logging.getLogger(__name__)
 
@@ -209,6 +209,20 @@ class BoardPlayer:
     adp: float | None
 
 
+def personal_ranks(session: Session, league_id: int) -> dict[str, int]:
+    """{sleeper_id: rank} of the user's own ranking, empty when they have none.
+
+    Defined here rather than in analysis.rankings because that module builds on this
+    one; putting it the other way round would make the import circular.
+    """
+    rows = session.execute(
+        select(PersonalRank.sleeper_id, PersonalRank.rank).where(
+            PersonalRank.league_id == league_id
+        )
+    ).all()
+    return {sleeper_id: rank for sleeper_id, rank in rows}
+
+
 def detect_slot(session: Session, league: League) -> int | None:
     """The user's draft slot, from the platform's published draft order."""
     team = _my_team(session, league.id)
@@ -293,7 +307,11 @@ def _board(session: Session, league: League) -> list[BoardPlayer]:
     return board
 
 
-def _player_payload(player: BoardPlayer, pick: int | None = None) -> dict[str, Any]:
+def _player_payload(
+    player: BoardPlayer,
+    pick: int | None = None,
+    my_ranks: dict[str, int] | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "sleeperId": player.sleeper_id,
         "name": player.name,
@@ -305,6 +323,14 @@ def _player_payload(player: BoardPlayer, pick: int | None = None) -> dict[str, A
         # ADP saturates near 170, so it is only reported where it still says something.
         "adp": player.adp if (player.adp and player.adp < 165) else None,
     }
+    if my_ranks:
+        my_rank = my_ranks.get(player.sleeper_id)
+        payload["myRank"] = my_rank
+        # Positive means you rank them higher than the market does.
+        payload["myDelta"] = (
+            player.board_slot - my_rank if my_rank is not None else None
+        )
+
     if pick is not None:
         probability = availability(player.board_slot, pick)
         payload["availability"] = round(probability, 3)
@@ -339,6 +365,7 @@ def heat_map(
     active_slot = max(1, min(active_slot, team_count))
 
     board = _board(session, league)
+    my_ranks = personal_ranks(session, league_id)
     picks = pick_numbers(active_slot, team_count, total_rounds, draft_type)
 
     base_type, blend = rank_type_for(league)
@@ -369,7 +396,7 @@ def heat_map(
                 "round": index,
                 "pick": pick,
                 "slotInRound": ((pick - 1) % team_count) + 1,
-                "targets": [_player_payload(p, pick) for p in targets],
+                "targets": [_player_payload(p, pick, my_ranks) for p in targets],
                 # The point of the feature: what is realistically there, by position.
                 "positionCounts": [
                     {"position": position, "count": count}
@@ -397,7 +424,7 @@ def heat_map(
                     "pick": pick,
                     "slot": column,
                     "isMine": column == active_slot,
-                    "player": _player_payload(player) if player else None,
+                    "player": _player_payload(player, None, my_ranks) if player else None,
                 }
             )
         grid.append({"round": rnd, "cells": cells})
@@ -410,7 +437,7 @@ def heat_map(
     for player in board:
         position_on_board = player.board_slot
         score, best_pick = target_score(player.board_slot, picks)
-        payload = _player_payload(player)
+        payload = _player_payload(player, None, my_ranks)
         payload.update(
             {
                 "boardSlot": position_on_board,
@@ -447,4 +474,5 @@ def heat_map(
         "roundTargets": round_rows,
         "grid": grid,
         "players": all_players,
+        "hasCustomRanks": bool(my_ranks),
     }
