@@ -16,13 +16,22 @@
   --text-dim: #8797ad;
   --text-faint: #5a6a80;
 
-  /* Positional palette. Each position keeps one hue everywhere it appears. */
-  --pos-qb: #f2b134;
-  --pos-rb: #35c98d;
-  --pos-wr: #4aa3f0;
-  --pos-te: #b07ce8;
-  --pos-k: #e8834a;
-  --pos-def: #e05c6e;
+  /* Positional palette. Each position keeps one hue everywhere it appears, so a
+     colour means the same thing on a chip, a board cell and a chart line.
+
+     These are not hand-picked. The previous set failed a colourblind-safety check
+     badly - the old WR blue and TE violet sat 1.4 apart under deuteranopia and 14.6
+     for normal vision, below the readable floor. On a chip carrying a text label
+     that is survivable; on four overlapping chart lines it is not. This set was
+     searched for and validated against the #111720 chart surface, checking every
+     pair rather than only neighbours: worst deuteranope separation 11.0, worst
+     normal-vision separation 15.6, all six inside the dark lightness band. */
+  --pos-qb: #bb881a;
+  --pos-rb: #05ab86;
+  --pos-wr: #5283fe;
+  --pos-te: #a264b0;
+  --pos-k: #c92420;
+  --pos-def: #00775c;
   --pos-flex: #7f92a8;
 
   --live: #35c98d;
@@ -275,8 +284,18 @@ body {
 .chip[data-pos="RB"] { background: var(--pos-rb); }
 .chip[data-pos="WR"] { background: var(--pos-wr); }
 .chip[data-pos="TE"] { background: var(--pos-te); }
-.chip[data-pos="K"]  { background: var(--pos-k); }
-.chip[data-pos="DEF"]{ background: var(--pos-def); }
+
+/* K and DEF are the two dark enough to need light text. Measured, not guessed:
+   near-black gives 3.46:1 and 3.50:1 on these, white gives 5.59:1 and 5.54:1. */
+.chip[data-pos="K"] {
+  background: var(--pos-k);
+  color: #ffffff;
+}
+
+.chip[data-pos="DEF"] {
+  background: var(--pos-def);
+  color: #ffffff;
+}
 
 .pro-team {
   font-family: var(--mono);
@@ -1527,4 +1546,341 @@ table.draft-grid .rlabel {
 
 .rank-bar .state.ok {
   color: var(--live);
+}
+
+/* --- dropoff chart --------------------------------------------------------
+   Grid and axes stay recessive; the four lines are the only saturated thing on
+   the surface. Text wears text tokens throughout - a coloured swatch beside a
+   label carries identity, the label itself never does. */
+
+.chart-wrap {
+  background: var(--ink-800);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 18px 10px;
+  position: relative;
+}
+
+.chart-wrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.gridline {
+  stroke: var(--line-soft);
+  stroke-width: 1;
+}
+
+.axisline {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.axis-label {
+  fill: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.axis-title {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.series-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* Direct label at the end of each line - identity without a colour lookup. */
+/* The label sits at the end of its own line, so the line carries identity and the
+   text can stay in ink. Coloured text is lower contrast and less CVD-safe than a
+   coloured mark beside neutral text. */
+.series-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--text-dim);
+}
+
+/* Where a position stops being startable league-wide. A ring, not a full line,
+   so four of them do not turn the plot into a grid. */
+.repl-marker {
+  fill: var(--ink-800);
+  stroke-width: 2;
+}
+
+/* Solid, not dashed: a dashed rule reads as a threshold or a projection, and
+   this is neither - it just marks where the pointer is. */
+.crosshair {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.hover-dot {
+  stroke: var(--ink-800);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--ink-600);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 12px;
+  min-width: 168px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  z-index: 5;
+}
+
+.chart-tip .tip-head {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 5px;
+}
+
+.tip-row {
+  display: grid;
+  grid-template-columns: 10px 30px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 1px 0;
+}
+
+.tip-row .sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.tip-row .tp {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.tip-row .tn {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tip-row .tpos {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.chart-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  align-items: center;
+}
+
+.chart-legend .lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-legend .bar {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.chart-legend .ring {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--text-faint);
+}
+
+.chart-note {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.chart-note b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+table.curve-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 4px;
+}
+
+table.curve-table th,
+table.curve-table td {
+  padding: 4px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+table.curve-table th {
+  color: var(--text-faint);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 9px;
+}
+
+table.curve-table td:first-child,
+table.curve-table th:first-child {
+  text-align: left;
+  color: var(--text-faint);
+}
+
+/* Section rules inside a mock card, so starters and bench read as two lists. */
+.card-section {
+  padding: 5px 11px 3px;
+  background: var(--ink-700);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.mock-row .rd {
+  color: var(--text-faint);
+  margin-right: 7px;
+}
+
+.card-foot {
+  padding: 8px 11px;
+  border-top: 1px solid var(--line);
+  background: var(--ink-700);
+}
+
+.card-foot .btn {
+  width: 100%;
+}
+
+/* --- study bar charts -----------------------------------------------------
+   One series with emphasis, not a categorical palette: every bar is the same
+   deliberately desaturated steel and the one that matters is picked out in the
+   accent already used for "yours" everywhere else in the app. Colouring bars by
+   value would double-encode the thing bar length already says. */
+
+:root {
+  --bar-neutral: #54748f;
+  --bar-accent: var(--live);
+}
+
+.bar-rect {
+  fill: var(--bar-neutral);
+}
+
+.bar-rect.accent {
+  fill: var(--bar-accent);
+}
+
+.bar-rect:hover {
+  fill: var(--text-dim);
+}
+
+/* Simulation means without their spread invite over-reading, so every bar
+   carries one standard error. */
+.err-bar {
+  stroke: var(--text-faint);
+  stroke-width: 1.5;
+}
+
+.bar-value {
+  fill: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-cat {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.bar-cat.accent {
+  fill: var(--live);
+  font-weight: 700;
+}
+
+.study-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: var(--ink-700);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.study-bar .group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.study-bar label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.study-bar input[type="number"] {
+  background: var(--ink-800);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 5px 8px;
+  width: 84px;
+}
+
+.study-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: right;
+  line-height: 1.5;
+}
+
+.study-block + .study-block {
+  margin-top: 26px;
 }

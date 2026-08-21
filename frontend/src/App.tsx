@@ -189,9 +189,21 @@ type AdpBoard = {
 
 type Strategy = { key: string; label: string };
 
+type MockPickRow = {
+  sleeperId: string;
+  name: string;
+  position: string;
+  proTeam: string | null;
+  points: number;
+  round: number;
+  pickNo: number;
+  boardSlot: number;
+  myRank: number | null;
+};
+
 type LineupRow = {
   slot: string;
-  player: { name: string; position: string; proTeam: string | null; points: number } | null;
+  player: MockPickRow | null;
 };
 
 type MockResult = {
@@ -201,19 +213,12 @@ type MockResult = {
   strategyLabel: string;
   starterPoints: number;
   lineup: LineupRow[];
+  bench: MockPickRow[];
   positionCounts: { position: string; count: number }[];
-  picks: {
-    pickNo: number;
-    round: number;
-    name: string;
-    position: string;
-    proTeam: string | null;
-    points: number;
-    boardSlot: number;
-    myRank: number | null;
-  }[];
+  picks: MockPickRow[];
   run: number;
   seed: number;
+  field?: MockResult[];
 };
 
 type MockBatch = {
@@ -262,6 +267,57 @@ type LiveMock = {
   recentPicks: LivePick[];
   available: LiveAvailable[];
   myPickNumbers: number[];
+};
+
+
+type CurvePoint = {
+  rank: number;
+  points: number;
+  name: string;
+  proTeam: string | null;
+  boardSlot: number;
+};
+
+type CurveSeries = {
+  position: string;
+  replacement: number;
+  startersLeagueWide: number;
+  startersPerTeam: number;
+  points: CurvePoint[];
+};
+
+type Curves = {
+  league: { id: number; name: string; teamCount: number; platform: string };
+  depth: number;
+  yMin: number;
+  yMax: number;
+  series: CurveSeries[];
+};
+
+
+type StudyRow = {
+  label: string;
+  key: string;
+  mean: number;
+  stdev: number;
+  stderr: number;
+  min: number;
+  max: number;
+  n: number;
+  slot?: number;
+};
+
+type Study = {
+  kind: string;
+  runs: number;
+  drafts: number;
+  slot?: number;
+  strategy?: string;
+  strategyLabel?: string;
+  teamCount: number;
+  elapsed: number;
+  generatedAt: string;
+  results: StudyRow[];
 };
 
 const get = <T,>(path: string): Promise<T> =>
@@ -1108,12 +1164,44 @@ const ALL_STRATEGIES: Strategy[] = [
   { key: "rb_wr", label: "RB-WR start" },
 ];
 
+function RosterRow({
+  slot,
+  pick,
+}: {
+  slot?: string;
+  pick: MockPickRow | null;
+}) {
+  return (
+    <div className="mock-row">
+      <span className="mslot">{slot ?? "BN"}</span>
+      {pick ? (
+        <>
+          <span className="mname">
+            <PositionChip position={pick.position} /> {pick.name}
+          </span>
+          <span className="mpts">
+            <span className="rd">R{pick.round}</span>
+            {pick.points.toFixed(0)}
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="mname player-name empty">unfilled</span>
+          <span className="mpts">—</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LineupCard({
   result,
   best,
+  onOpen,
 }: {
   result: MockResult;
   best: boolean;
+  onOpen?: () => void;
 }) {
   return (
     <div className={`mock-card${best ? " best" : ""}`}>
@@ -1122,24 +1210,102 @@ function LineupCard({
         <span className="strat">{result.strategyLabel}</span>
         <span className="pts">{result.starterPoints.toFixed(0)}</span>
       </header>
+
+      <div className="card-section">starters</div>
       {result.lineup.map((row, i) => (
-        <div className="mock-row" key={`${row.slot}-${i}`}>
-          <span className="mslot">{row.slot}</span>
-          {row.player ? (
-            <>
-              <span className="mname">
-                <PositionChip position={row.player.position} /> {row.player.name}
-              </span>
-              <span className="mpts">{row.player.points.toFixed(0)}</span>
-            </>
-          ) : (
-            <>
-              <span className="mname player-name empty">unfilled</span>
-              <span className="mpts">—</span>
-            </>
-          )}
-        </div>
+        <RosterRow key={`s${i}`} slot={row.slot} pick={row.player} />
       ))}
+
+      {result.bench.length > 0 && (
+        <>
+          <div className="card-section">bench</div>
+          {result.bench.map((pick) => (
+            <RosterRow key={pick.sleeperId} pick={pick} />
+          ))}
+        </>
+      )}
+
+      {onOpen && result.field && (
+        <div className="card-foot">
+          <button className="btn" onClick={onOpen}>
+            Full draft board
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FullDraftBoard({
+  result,
+  onClose,
+}: {
+  result: MockResult;
+  onClose: () => void;
+}) {
+  // The result is one team lifted out of a draft that really happened; put it
+  // back next to the eleven it was drafted against.
+  const teams = [result, ...(result.field ?? [])].sort((a, b) => a.slot - b.slot);
+  const rounds = Math.max(...teams.map((t) => t.picks.length));
+
+  return (
+    <div className="block">
+      <div className="block-head">
+        <h2>
+          Full draft · slot {result.slot} · {result.strategyLabel}
+        </h2>
+        <span className="count num">
+          {teams.length} teams · {rounds} rounds
+        </span>
+        <button className="btn" style={{ marginLeft: 12 }} onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      <div className="grid-scroll">
+        <table className="draft-grid">
+          <thead>
+            <tr>
+              <th />
+              {teams.map((t) => (
+                <th key={t.slot} className={t.isMine ? "slot-mine" : undefined}>
+                  {t.isMine ? `${t.slot} YOU` : t.slot}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: rounds }, (_, i) => i + 1).map((rnd) => (
+              <tr key={rnd}>
+                <td className="rlabel">R{rnd}</td>
+                {teams.map((t) => {
+                  const pick = t.picks.find((p) => p.round === rnd);
+                  return (
+                    <td key={t.slot}>
+                      <div
+                        className={`cell${t.isMine ? " mine" : ""}${
+                          pick ? "" : " empty"
+                        }`}
+                        data-pos={pick?.position}
+                      >
+                        <div className="cname">{pick ? pick.name : "—"}</div>
+                        <div className="cmeta">
+                          {pick ? `${pick.pickNo} · ${pick.position}` : ""}
+                        </div>
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="chart-note">
+        Each rival drafts the market board with a little noise and a strategy of its
+        own — {teams.filter((t) => !t.isMine).map((t) => t.strategyLabel).filter((v, i, a) => a.indexOf(v) === i).join(", ")}.
+      </div>
     </div>
   );
 }
@@ -1153,6 +1319,7 @@ function QuickSim({ leagueId, teamCount }: { leagueId: number; teamCount: number
   const [runs, setRuns] = useState(2);
   const [batch, setBatch] = useState<MockBatch | null>(null);
   const [running, setRunning] = useState(false);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   useEffect(() => {
     get<AdpBoard>(`/api/leagues/${leagueId}/adp-board?per_round=1`)
@@ -1163,10 +1330,14 @@ function QuickSim({ leagueId, teamCount }: { leagueId: number; teamCount: number
 
   const run = () => {
     setRunning(true);
+    setOpenIndex(null);
     send<MockBatch>(`/api/leagues/${leagueId}/mock/simulate`, "POST", {
       slots: slotMode === "mine" ? [mySlot] : null,
       strategies,
       runsPerCombo: runs,
+      // Comparing every slot asks a question about slots, not rosters; carrying
+      // eleven extra teams per result would be twelve times the payload for it.
+      includeField: slotMode === "mine",
     })
       .then(setBatch)
       .finally(() => setRunning(false));
@@ -1261,15 +1432,24 @@ function QuickSim({ leagueId, teamCount }: { leagueId: number; teamCount: number
           two runs of the same strategy will not look the same.
         </div>
       ) : (
-        <div className="mock-grid">
-          {batch.results.map((r, i) => (
-            <LineupCard
-              key={`${r.slot}-${r.strategy}-${r.run}-${i}`}
-              result={r}
-              best={r.starterPoints === best}
+        <>
+          {openIndex !== null && batch.results[openIndex] && (
+            <FullDraftBoard
+              result={batch.results[openIndex]}
+              onClose={() => setOpenIndex(null)}
             />
-          ))}
-        </div>
+          )}
+          <div className="mock-grid">
+            {batch.results.map((r, i) => (
+              <LineupCard
+                key={`${r.slot}-${r.strategy}-${r.run}-${i}`}
+                result={r}
+                best={r.starterPoints === best}
+                onOpen={() => setOpenIndex(i)}
+              />
+            ))}
+          </div>
+        </>
       )}
     </>
   );
@@ -1480,6 +1660,687 @@ function MockView({ leagueId, teamCount }: { leagueId: number; teamCount: number
   );
 }
 
+
+// Identity comes from the shared positional tokens, so a colour means the same
+// thing here as it does on a chip. The set is validated for colourblind safety
+// against this surface - see the note in index.css.
+const POS_COLOR: Record<string, string> = {
+  QB: "var(--pos-qb)",
+  RB: "var(--pos-rb)",
+  WR: "var(--pos-wr)",
+  TE: "var(--pos-te)",
+};
+
+const PLOT = { w: 900, h: 420, l: 52, r: 46, t: 16, b: 44 };
+
+function DropoffChart({ data }: { data: Curves }) {
+  const [hoverRank, setHoverRank] = useState<number | null>(null);
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+
+  const depth = Math.max(...data.series.map((s) => s.points.length), 1);
+  const lo = Math.min(...data.series.flatMap((s) => s.points.map((p) => p.points)));
+  const hi = Math.max(...data.series.flatMap((s) => s.points.map((p) => p.points)));
+  // A little headroom so the top line is not welded to the frame.
+  const pad = (hi - lo) * 0.06 || 1;
+  const yLo = lo - pad;
+  const yHi = hi + pad;
+
+  const px = (rank: number) =>
+    PLOT.l + ((rank - 1) / Math.max(depth - 1, 1)) * (PLOT.w - PLOT.l - PLOT.r);
+  const py = (v: number) =>
+    PLOT.t + (1 - (v - yLo) / (yHi - yLo)) * (PLOT.h - PLOT.t - PLOT.b);
+
+  const yTicks = 5;
+  const ticks = Array.from({ length: yTicks + 1 }, (_, i) => yLo + ((yHi - yLo) * i) / yTicks);
+  const xTicks = depth <= 20 ? [1, 5, 10, 15, 20] : [1, 8, 16, 24, 32, 40].filter((t) => t <= depth);
+
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const scale = PLOT.w / rect.width;
+    const xSvg = (e.clientX - rect.left) * scale;
+    const frac = (xSvg - PLOT.l) / (PLOT.w - PLOT.l - PLOT.r);
+    const rank = Math.round(1 + frac * Math.max(depth - 1, 1));
+    if (rank < 1 || rank > depth) {
+      setHoverRank(null);
+      setTip(null);
+      return;
+    }
+    setHoverRank(rank);
+    setTip({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  };
+
+  const clear = () => {
+    setHoverRank(null);
+    setTip(null);
+  };
+
+  return (
+    <div className="chart-wrap">
+      <svg
+        viewBox={`0 0 ${PLOT.w} ${PLOT.h}`}
+        role="img"
+        aria-label="Projected points by positional rank, one line per position"
+        onMouseMove={onMove}
+        onMouseLeave={clear}
+      >
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line
+              className="gridline"
+              x1={PLOT.l}
+              x2={PLOT.w - PLOT.r}
+              y1={py(t)}
+              y2={py(t)}
+            />
+            <text className="axis-label" x={PLOT.l - 8} y={py(t) + 3} textAnchor="end">
+              {Math.round(t)}
+            </text>
+          </g>
+        ))}
+
+        <line
+          className="axisline"
+          x1={PLOT.l}
+          x2={PLOT.w - PLOT.r}
+          y1={PLOT.h - PLOT.b}
+          y2={PLOT.h - PLOT.b}
+        />
+        {xTicks.map((t) => (
+          <text
+            key={t}
+            className="axis-label"
+            x={px(t)}
+            y={PLOT.h - PLOT.b + 16}
+            textAnchor="middle"
+          >
+            {t}
+          </text>
+        ))}
+
+        <text className="axis-title" x={PLOT.l} y={PLOT.h - 6}>
+          player rank within position
+        </text>
+        <text
+          className="axis-title"
+          transform={`translate(13 ${PLOT.t + 8}) rotate(-90)`}
+          textAnchor="end"
+        >
+          projected points
+        </text>
+
+        {hoverRank !== null && (
+          <line
+            className="crosshair"
+            x1={px(hoverRank)}
+            x2={px(hoverRank)}
+            y1={PLOT.t}
+            y2={PLOT.h - PLOT.b}
+          />
+        )}
+
+        {data.series.map((series) => {
+          const d = series.points
+            .map((p, i) => `${i === 0 ? "M" : "L"}${px(p.rank)},${py(p.points)}`)
+            .join(" ");
+          const last = series.points[series.points.length - 1];
+          // The rank at which this position drops below replacement level - the
+          // point after which another one of these barely helps.
+          const crossing = series.points.find((p) => p.points <= series.replacement);
+          return (
+            <g key={series.position}>
+              <path className="series-line" d={d} stroke={POS_COLOR[series.position]} />
+              {crossing && (
+                <circle
+                  className="repl-marker"
+                  cx={px(crossing.rank)}
+                  cy={py(crossing.points)}
+                  r={5}
+                  stroke={POS_COLOR[series.position]}
+                />
+              )}
+              <text
+                className="series-label"
+                x={px(last.rank) + 7}
+                y={py(last.points) + 4}
+              >
+                {series.position}
+              </text>
+            </g>
+          );
+        })}
+
+        {hoverRank !== null &&
+          data.series.map((series) => {
+            const point = series.points.find((p) => p.rank === hoverRank);
+            if (!point) return null;
+            return (
+              <circle
+                key={series.position}
+                className="hover-dot"
+                cx={px(point.rank)}
+                cy={py(point.points)}
+                r={5}
+                fill={POS_COLOR[series.position]}
+              />
+            );
+          })}
+      </svg>
+
+      {hoverRank !== null && tip && (
+        <div
+          className="chart-tip"
+          style={{
+            left: Math.min(tip.x + 16, 640),
+            top: Math.max(tip.y - 20, 4),
+          }}
+        >
+          <div className="tip-head">rank {hoverRank} at each position</div>
+          {data.series.map((series) => {
+            const point = series.points.find((p) => p.rank === hoverRank);
+            if (!point) return null;
+            return (
+              <div className="tip-row" key={series.position}>
+                <span
+                  className="sw"
+                  style={{ background: POS_COLOR[series.position] }}
+                />
+                <span className="tpos">
+                  {series.position}
+                  {hoverRank}
+                </span>
+                <span className="tn">{point.name}</span>
+                <span className="tp">{point.points.toFixed(0)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="chart-legend">
+        {data.series.map((series) => (
+          <span className="lg" key={series.position}>
+            <span
+              className="bar"
+              style={{ background: POS_COLOR[series.position] }}
+            />
+            {series.position}
+          </span>
+        ))}
+        <span className="lg">
+          <span className="ring" />
+          replacement level
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function CurveTable({ data }: { data: Curves }) {
+  const depth = Math.max(...data.series.map((s) => s.points.length), 1);
+  const rows = Array.from({ length: Math.min(depth, 24) }, (_, i) => i + 1);
+  return (
+    <div className="grid-scroll">
+      <table className="curve-table">
+        <thead>
+          <tr>
+            <th>rank</th>
+            {data.series.map((s) => (
+              <th key={s.position}>{s.position}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((rank) => (
+            <tr key={rank}>
+              <td>{rank}</td>
+              {data.series.map((s) => {
+                const p = s.points.find((x) => x.rank === rank);
+                return <td key={s.position}>{p ? p.points.toFixed(0) : "—"}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
+const BAR = { w: 900, h: 300, l: 58, r: 20, t: 18, b: 46 };
+
+function ageOf(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} h ago`;
+  return `${Math.round(hrs / 24)} d ago`;
+}
+
+function StudyBars({
+  study,
+  accentKey,
+}: {
+  study: Study;
+  accentKey: (row: StudyRow, best: StudyRow) => boolean;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const rows = study.results;
+  const best = rows.reduce((a, b) => (b.mean > a.mean ? b : a), rows[0]);
+
+  // Zooming the baseline is the only way small differences between simulated
+  // rosters are visible at all, so the axis says plainly that it is not at zero.
+  const lows = rows.map((r) => r.mean - r.stderr);
+  const highs = rows.map((r) => r.mean + r.stderr);
+  const span = Math.max(...highs) - Math.min(...lows);
+  const yLo = Math.min(...lows) - span * 0.35;
+  const yHi = Math.max(...highs) + span * 0.2;
+
+  const bandW = (BAR.w - BAR.l - BAR.r) / rows.length;
+  const barW = Math.min(bandW * 0.62, 54);
+  const cx = (i: number) => BAR.l + bandW * i + bandW / 2;
+  const py = (v: number) =>
+    BAR.t + (1 - (v - yLo) / (yHi - yLo)) * (BAR.h - BAR.t - BAR.b);
+
+  const ticks = Array.from({ length: 5 }, (_, i) => yLo + ((yHi - yLo) * i) / 4);
+
+  return (
+    <div className="chart-wrap">
+      <svg
+        viewBox={`0 0 ${BAR.w} ${BAR.h}`}
+        role="img"
+        aria-label={`Average projected starting points, ${study.runs} drafts each`}
+      >
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line
+              className="gridline"
+              x1={BAR.l}
+              x2={BAR.w - BAR.r}
+              y1={py(t)}
+              y2={py(t)}
+            />
+            <text className="axis-label" x={BAR.l - 8} y={py(t) + 3} textAnchor="end">
+              {Math.round(t)}
+            </text>
+          </g>
+        ))}
+
+        {rows.map((row, i) => {
+          const accent = accentKey(row, best);
+          const top = py(row.mean);
+          const base = BAR.h - BAR.b;
+          return (
+            <g
+              key={row.key}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+            >
+              {/* Hit area is the whole band, not the bar. */}
+              <rect
+                x={cx(i) - bandW / 2}
+                y={BAR.t}
+                width={bandW}
+                height={base - BAR.t}
+                fill="transparent"
+              />
+              <rect
+                className={`bar-rect${accent ? " accent" : ""}`}
+                x={cx(i) - barW / 2}
+                y={top}
+                width={barW}
+                height={Math.max(base - top, 1)}
+                rx={3}
+              />
+              <line
+                className="err-bar"
+                x1={cx(i)}
+                x2={cx(i)}
+                y1={py(row.mean - row.stderr)}
+                y2={py(row.mean + row.stderr)}
+              />
+              <line
+                className="err-bar"
+                x1={cx(i) - 5}
+                x2={cx(i) + 5}
+                y1={py(row.mean + row.stderr)}
+                y2={py(row.mean + row.stderr)}
+              />
+              <line
+                className="err-bar"
+                x1={cx(i) - 5}
+                x2={cx(i) + 5}
+                y1={py(row.mean - row.stderr)}
+                y2={py(row.mean - row.stderr)}
+              />
+              {(accent || hover === i) && (
+                <text
+                  className="bar-value"
+                  x={cx(i)}
+                  y={py(row.mean + row.stderr) - 7}
+                  textAnchor="middle"
+                >
+                  {row.mean.toFixed(0)}
+                </text>
+              )}
+              <text
+                className={`bar-cat${accent ? " accent" : ""}`}
+                x={cx(i)}
+                y={base + 15}
+                textAnchor="middle"
+              >
+                {row.label.replace("Slot ", "")}
+              </text>
+            </g>
+          );
+        })}
+
+        <line
+          className="axisline"
+          x1={BAR.l}
+          x2={BAR.w - BAR.r}
+          y1={BAR.h - BAR.b}
+          y2={BAR.h - BAR.b}
+        />
+        <text
+          className="axis-title"
+          transform={`translate(13 ${BAR.t + 8}) rotate(-90)`}
+          textAnchor="end"
+        >
+          projected starters
+        </text>
+      </svg>
+
+      {hover !== null && rows[hover] && (
+        <div className="chart-legend" style={{ marginTop: 6 }}>
+          <span>
+            <b style={{ color: "var(--text)" }}>{rows[hover].label}</b> ·{" "}
+            {rows[hover].mean.toFixed(0)} ± {rows[hover].stderr.toFixed(1)} ·{" "}
+            range {rows[hover].min.toFixed(0)}–{rows[hover].max.toFixed(0)} ·{" "}
+            {rows[hover].n} drafts
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StudyTable({ study }: { study: Study }) {
+  return (
+    <div className="grid-scroll">
+      <table className="curve-table">
+        <thead>
+          <tr>
+            <th>{study.kind === "slot" ? "slot" : "strategy"}</th>
+            <th>mean</th>
+            <th>± se</th>
+            <th>min</th>
+            <th>max</th>
+            <th>drafts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {study.results.map((r) => (
+            <tr key={r.key}>
+              <td>{r.label}</td>
+              <td>{r.mean.toFixed(1)}</td>
+              <td>{r.stderr.toFixed(1)}</td>
+              <td>{r.min.toFixed(0)}</td>
+              <td>{r.max.toFixed(0)}</td>
+              <td>{r.n}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StudyPanel({
+  leagueId,
+  kind,
+  title,
+  blurb,
+  defaultRuns,
+  maxRuns,
+  perRun,
+  accentKey,
+}: {
+  leagueId: number;
+  kind: "slot" | "strategy";
+  title: string;
+  blurb: string;
+  defaultRuns: number;
+  maxRuns: number;
+  perRun: number;
+  accentKey: (row: StudyRow, best: StudyRow) => boolean;
+}) {
+  const [study, setStudy] = useState<Study | null>(null);
+  const [runs, setRuns] = useState(defaultRuns);
+  const [busy, setBusy] = useState(false);
+  const [asTable, setAsTable] = useState(false);
+
+  // The last run is kept server-side, so opening the page shows the previous
+  // answer rather than a blank panel and a wait.
+  useEffect(() => {
+    setStudy(null);
+    get<{ study: Study | null }>(`/api/leagues/${leagueId}/mock/study?kind=${kind}`)
+      .then((r) => {
+        if (r.study) {
+          setStudy(r.study);
+          setRuns(r.study.runs);
+        }
+      })
+      .catch(() => undefined);
+  }, [leagueId, kind]);
+
+  const run = () => {
+    setBusy(true);
+    send<{ study: Study }>(
+      `/api/leagues/${leagueId}/mock/study/${kind}`,
+      "POST",
+      { runs }
+    )
+      .then((r) => setStudy(r.study))
+      .finally(() => setBusy(false));
+  };
+
+  const estimate = (runs * perRun * 0.027).toFixed(0);
+
+  return (
+    <div className="study-block">
+      <div className="block-head">
+        <h2>{title}</h2>
+        {study && (
+          <span className="count num">
+            {study.drafts} drafts · {study.elapsed}s
+          </span>
+        )}
+      </div>
+
+      <div className="study-bar">
+        <div className="group">
+          <label>Drafts each</label>
+          <input
+            type="number"
+            min={1}
+            max={maxRuns}
+            value={runs}
+            onChange={(e) =>
+              setRuns(Math.max(1, Math.min(maxRuns, Number(e.target.value) || 1)))
+            }
+          />
+        </div>
+        <div className="group">
+          <label>&nbsp;</label>
+          <button className="btn primary" onClick={run} disabled={busy}>
+            {busy ? `Simulating ${runs * perRun} drafts...` : "Generate"}
+          </button>
+        </div>
+        <div className="group">
+          <label>View</label>
+          <div className="view-toggle" style={{ marginLeft: 0 }}>
+            <button aria-pressed={!asTable} onClick={() => setAsTable(false)}>
+              Chart
+            </button>
+            <button aria-pressed={asTable} onClick={() => setAsTable(true)}>
+              Table
+            </button>
+          </div>
+        </div>
+        <div className="study-meta">
+          {study ? (
+            <>
+              last run {ageOf(study.generatedAt)}
+              <br />
+              {study.runs} drafts each · max {maxRuns}
+            </>
+          ) : (
+            <>
+              not run yet
+              <br />~{estimate}s for {runs * perRun} drafts
+            </>
+          )}
+        </div>
+      </div>
+
+      {!study ? (
+        <div className="notice">{blurb}</div>
+      ) : asTable ? (
+        <StudyTable study={study} />
+      ) : (
+        <>
+          <StudyBars study={study} accentKey={accentKey} />
+          <div className="chart-note">
+            {blurb} Bars carry one standard error; two that overlap are not
+            meaningfully different, so raise the draft count before reading a small
+            gap as real. <b>The axis does not start at zero</b> — the differences
+            here are a few percent and would be invisible if it did.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GraphsView({ leagueId }: { leagueId: number }) {
+  const [data, setData] = useState<Curves | null>(null);
+  const [depth, setDepth] = useState(40);
+  const [asTable, setAsTable] = useState(false);
+  const [mySlot, setMySlot] = useState<number | null>(null);
+  const [teamCount, setTeamCount] = useState(12);
+
+  useEffect(() => {
+    setData(null);
+    get<Curves>(`/api/leagues/${leagueId}/curves?depth=${depth}`)
+      .then(setData)
+      .catch(() => setData(null));
+  }, [leagueId, depth]);
+
+  useEffect(() => {
+    get<AdpBoard>(`/api/leagues/${leagueId}/adp-board?per_round=1`)
+      .then((b) => {
+        setMySlot(b.detectedSlot ?? b.slot);
+        setTeamCount(b.league.teamCount);
+      })
+      .catch(() => undefined);
+  }, [leagueId]);
+
+  if (!data) return <div className="notice">Building curves...</div>;
+  if (data.series.length === 0)
+    return (
+      <div className="notice">
+        No projections for this league yet. Run <code>backend.cli sync</code>.
+      </div>
+    );
+
+  // The steepest early drop is the headline: it is the position where taking one
+  // sooner buys the most.
+  const drops = data.series.map((s) => {
+    const first = s.points[0]?.points ?? 0;
+    const twelfth = s.points[Math.min(11, s.points.length - 1)]?.points ?? first;
+    return { position: s.position, drop: first - twelfth };
+  });
+  drops.sort((a, b) => b.drop - a.drop);
+
+  return (
+    <>
+      <div className="mock-controls">
+        <div className="group">
+          <label>Depth</label>
+          <div className="chips">
+            {[20, 40, 60].map((d) => (
+              <button
+                key={d}
+                className="chip-toggle"
+                aria-pressed={depth === d}
+                onClick={() => setDepth(d)}
+              >
+                {d} deep
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="group">
+          <label>View</label>
+          <div className="view-toggle" style={{ marginLeft: 0 }}>
+            <button aria-pressed={!asTable} onClick={() => setAsTable(false)}>
+              Chart
+            </button>
+            <button aria-pressed={asTable} onClick={() => setAsTable(true)}>
+              Table
+            </button>
+          </div>
+        </div>
+        <div className="board-meta">
+          {data.league.name}
+          <br />
+          {data.league.teamCount} teams · scored under this league's rules
+        </div>
+      </div>
+
+      {asTable ? <CurveTable data={data} /> : <DropoffChart data={data} />}
+
+      <div className="chart-note">
+        Steepest fall across the first twelve:{" "}
+        {drops.map((d, i) => (
+          <span key={d.position}>
+            {i > 0 ? " · " : ""}
+            <b>
+              {d.position} {d.drop.toFixed(0)}
+            </b>
+          </span>
+        ))}
+        . The ring on each line marks where that position drops below replacement
+        level — past it, another one of them barely improves your lineup.
+      </div>
+
+      <StudyPanel
+        leagueId={leagueId}
+        kind="slot"
+        title="Value by draft slot"
+        blurb="Average projected starting lineup from every seat, drafting balanced so the only thing changing is where you sit."
+        defaultRuns={20}
+        maxRuns={60}
+        perRun={teamCount}
+        accentKey={(row) => row.slot === mySlot}
+      />
+
+      <StudyPanel
+        leagueId={leagueId}
+        kind="strategy"
+        title="Value by opening strategy"
+        blurb="Average projected starting lineup for each opening, all from your own slot so the seat is not a confound."
+        defaultRuns={50}
+        maxRuns={200}
+        perRun={4}
+        accentKey={(row, best) => row.key === best.key}
+      />
+    </>
+  );
+}
+
 function AdpBoardView({ leagueId }: { leagueId: number }) {
   const [board, setBoard] = useState<AdpBoard | null>(null);
   const [slot, setSlot] = useState<number | null>(null);
@@ -1661,7 +2522,7 @@ export default function App() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<
-    "season" | "draft" | "board" | "rankings" | "mock"
+    "season" | "draft" | "board" | "rankings" | "mock" | "graphs"
   >("season");
 
   useEffect(() => {
@@ -1735,6 +2596,12 @@ export default function App() {
           >
             Mock
           </button>
+          <button
+            aria-pressed={view === "graphs"}
+            onClick={() => setView("graphs")}
+          >
+            Graphs
+          </button>
         </div>
         <span className="spacer" />
         <span className="meta num">
@@ -1760,7 +2627,9 @@ export default function App() {
       </nav>
 
       <main className="panel">
-        {view === "mock" ? (
+        {view === "graphs" ? (
+          <GraphsView leagueId={active.id} />
+        ) : view === "mock" ? (
           <MockView leagueId={active.id} teamCount={active.teamCount} />
         ) : view === "rankings" ? (
           <RankingsView leagueId={active.id} />

@@ -294,3 +294,121 @@ def test_slot_for_pick_linear():
     assert _slot_for_pick(1, 10, "linear") == 1
     assert _slot_for_pick(11, 10, "linear") == 1
     assert _slot_for_pick(15, 10, "linear") == 5
+
+
+# --- realism of the field ---------------------------------------------------
+
+
+def test_bots_stay_close_to_the_board():
+    """Rivals must not routinely let a player slide a full round.
+
+    The first version used a spread coefficient of 0.22, which let 18.6% of
+    draftable players fall twelve picks or more - a third-rounder regularly
+    lasting into the fourth, which made every simulated roster look better than a
+    real one. Measured on the synthetic board here, a full-round slide should stay
+    rare.
+    """
+    board = _board()
+    drafted_depth = 12 * 16
+    slides = []
+    for seed in range(6):
+        teams = simulate(
+            board=board,
+            my_ranks={},
+            roster_positions=SLOTS,
+            team_count=12,
+            rounds=16,
+            draft_type="snake",
+            my_slot=1,
+            strategy=BALANCED,
+            seed=seed,
+        )
+        for team in teams:
+            if team.is_mine:
+                continue
+            for pick in team.picks:
+                if pick.board_slot <= drafted_depth:
+                    slides.append(pick.pick_no - pick.board_slot)
+
+    assert slides, "no comparable picks captured"
+    fell_a_round = sum(1 for d in slides if d >= 12) / len(slides)
+    assert fell_a_round < 0.08, f"{fell_a_round:.1%} of picks fell a full round"
+
+
+def test_spread_widens_with_depth_but_stays_bounded():
+    from backend.analysis.mock import _spread
+
+    assert _spread(5) < _spread(60) <= _spread(600)
+    assert _spread(1) >= 2.0
+    assert _spread(10_000) <= 10.0
+
+
+# --- payload shape ----------------------------------------------------------
+
+
+def test_lineup_rows_carry_the_round_they_were_drafted():
+    teams = _run(my_slot=3)
+    mine = next(t for t in teams if t.is_mine)
+    from backend.analysis.mock import _team_payload
+
+    payload = _team_payload(mine, SLOTS)
+    for row in payload["lineup"]:
+        if row["player"]:
+            assert row["player"]["round"] >= 1
+            assert row["player"]["pickNo"] >= 1
+
+
+def test_bench_holds_everyone_the_lineup_could_not_fit():
+    teams = _run(my_slot=3)
+    mine = next(t for t in teams if t.is_mine)
+    from backend.analysis.mock import _team_payload
+
+    payload = _team_payload(mine, SLOTS)
+    started = {r["player"]["sleeperId"] for r in payload["lineup"] if r["player"]}
+    benched = {p["sleeperId"] for p in payload["bench"]}
+
+    assert not (started & benched), "a player cannot both start and sit"
+    assert started | benched == {p.sleeper_id for p in mine.picks}
+    assert len(payload["picks"]) == len(mine.picks)
+
+
+def test_bench_is_ordered_by_when_it_was_drafted():
+    teams = _run(my_slot=8)
+    from backend.analysis.mock import _team_payload
+
+    payload = _team_payload(next(t for t in teams if t.is_mine), SLOTS)
+    picks = [p["pickNo"] for p in payload["bench"]]
+    assert picks == sorted(picks)
+
+
+# --- studies ----------------------------------------------------------------
+
+
+def test_summarise_reports_spread_with_the_mean():
+    """A bar chart of simulation means without its uncertainty invites over-reading."""
+    from backend.analysis.mock import _summarise
+
+    row = _summarise("Slot 1", "1", [100.0, 110.0, 120.0], slot=1)
+    assert row["mean"] == 110.0
+    assert row["min"] == 100.0
+    assert row["max"] == 120.0
+    assert row["n"] == 3
+    assert row["stderr"] > 0
+    assert row["stderr"] < row["stdev"]  # error of the mean, not of one draft
+
+
+def test_summarise_handles_a_single_run():
+    from backend.analysis.mock import _summarise
+
+    row = _summarise("Slot 1", "1", [100.0])
+    assert row["mean"] == 100.0
+    assert row["stdev"] == 0.0
+    assert row["stderr"] == 0.0
+
+
+def test_study_run_counts_are_capped():
+    """A study is hundreds of drafts; an unbounded request would hang the request."""
+    from backend.analysis.mock import MAX_SLOT_RUNS, MAX_STRATEGY_RUNS
+
+    assert 1 <= MAX_SLOT_RUNS <= 100
+    assert 1 <= MAX_STRATEGY_RUNS <= 500

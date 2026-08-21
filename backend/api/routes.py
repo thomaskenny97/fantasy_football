@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.analysis import curves as curves_service
 from backend.analysis import mock as mock_service
 from backend.analysis import rankings as rankings_service
 from backend.analysis.adp_board import detect_slot, heat_map, pick_numbers
@@ -347,6 +348,17 @@ class MockRequest(BaseModel):
     strategies: list[str] | None = None
     runsPerCombo: int = Field(default=1, ge=1, le=5)
     seed: int | None = None
+    # The other eleven rosters. Off when comparing many slots, where the payload
+    # would be twelve times larger than the question.
+    includeField: bool = True
+
+
+class StudyRequest(BaseModel):
+    """How many drafts to run. Capped server-side; a study is not free."""
+
+    runs: int = Field(default=20, ge=1, le=200)
+    slot: int | None = None
+    strategy: str = "balanced"
 
 
 class MockAdvance(BaseModel):
@@ -417,6 +429,54 @@ def reset_rankings(league_id: int) -> dict[str, Any]:
         return {"removed": removed, "isCustom": False}
 
 
+@app.get("/api/leagues/{league_id}/curves")
+def positional_curves(league_id: int, depth: int = 40) -> dict[str, Any]:
+    """Projected points by positional rank, one series per position."""
+    with _session() as session:
+        try:
+            return curves_service.dropoff_curves(
+                session, league_id, depth=max(10, min(depth, 80))
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/leagues/{league_id}/mock/study")
+def get_study(league_id: int, kind: str = "slot") -> dict[str, Any]:
+    """The last study of this kind, or an empty envelope if none has been run."""
+    with _session() as session:
+        payload = mock_service.load_study(session, league_id, kind)
+        return {"kind": kind, "study": payload}
+
+
+@app.post("/api/leagues/{league_id}/mock/study/slot")
+def run_slot_study(league_id: int, body: StudyRequest) -> dict[str, Any]:
+    """Average value from every draft slot, then remember it."""
+    with _session() as session:
+        try:
+            payload = mock_service.study_slots(
+                session, league_id, runs=body.runs, strategy=body.strategy
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        mock_service.save_study(session, league_id, payload)
+        return {"kind": payload["kind"], "study": payload}
+
+
+@app.post("/api/leagues/{league_id}/mock/study/strategy")
+def run_strategy_study(league_id: int, body: StudyRequest) -> dict[str, Any]:
+    """Average value for each opening strategy, then remember it."""
+    with _session() as session:
+        try:
+            payload = mock_service.study_strategies(
+                session, league_id, runs=body.runs, slot=body.slot
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        mock_service.save_study(session, league_id, payload)
+        return {"kind": payload["kind"], "study": payload}
+
+
 @app.get("/api/mock/strategies")
 def mock_strategies() -> list[dict[str, str]]:
     return [
@@ -437,6 +497,7 @@ def simulate_mocks(league_id: int, body: MockRequest) -> dict[str, Any]:
                 strategies=body.strategies,
                 runs_per_combo=body.runsPerCombo,
                 seed=body.seed,
+                include_field=body.includeField,
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

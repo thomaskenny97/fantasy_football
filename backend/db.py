@@ -293,6 +293,27 @@ class PersonalRank(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class SimStudy(Base):
+    """The most recent simulation study for a league, cached.
+
+    A study is hundreds of drafts and takes real seconds, so the result is kept
+    rather than recomputed on every page load. One row per (league, kind): a new run
+    replaces the old one, because the question is always "what does it say now".
+    """
+
+    __tablename__ = "sim_study"
+    __table_args__ = (UniqueConstraint("league_id", "kind", name="uq_sim_study"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("league.id"), index=True)
+
+    # "slot" (value by draft position) or "strategy" (value by opening).
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    runs: Mapped[int] = mapped_column(Integer, default=0)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 def make_engine(db_path: str | None = None, echo: bool = False):
     path = db_path or str(DB_PATH)
     return create_engine(f"sqlite:///{path}", echo=echo, future=True)

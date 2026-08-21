@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import logging
 import random
+import statistics
+import time
+from datetime import datetime, timezone
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Sequence
@@ -28,11 +31,12 @@ from sqlalchemy.orm import Session
 from backend.analysis.adp_board import (
     _board,
     BoardPlayer,
+    detect_slot,
     personal_ranks,
     pick_numbers,
 )
 from backend.analysis.draft import slot_requirements, unfilled_starting_slots
-from backend.db import Draft, League
+from backend.db import Draft, League, SimStudy
 from backend.scoring.rules import SLOT_ELIGIBILITY
 
 log = logging.getLogger(__name__)
@@ -68,10 +72,21 @@ _EXTRA_DEPTH: dict[str, int] = {
     "DEF": 0,
 }
 
-# Spread of a player's drafted position around their board position. Widens deeper in
-# the draft, where consensus genuinely breaks down.
+# Spread of a player's drafted position around their board position, in picks. It
+# widens deeper into the draft, where consensus genuinely breaks down.
+#
+# Tuned against measurement rather than taste. The first version used 0.22 with a
+# 4-32 clamp, which let 18.6% of draftable players fall a full round or more - a
+# third-rounder routinely lasting into the fourth, which made every simulated roster
+# look better than a real one. At 0.07 that figure is 3.2%, with a median slide of
+# three picks: rare enough to be a break, common enough to still be a draft.
+_SPREAD_COEF = 0.07
+_SPREAD_MIN = 2.0
+_SPREAD_MAX = 10.0
+
+
 def _spread(position: float) -> float:
-    return min(max(0.22 * position, 4.0), 32.0)
+    return min(max(_SPREAD_COEF * position, _SPREAD_MIN), _SPREAD_MAX)
 
 
 # Your own ranking is followed more tightly than the market is - it is your opinion,
@@ -180,6 +195,20 @@ def _choose(
     return min(pool, key=lambda p: values[p.sleeper_id])
 
 
+def _pick_payload(pick: MockPick) -> dict[str, Any]:
+    return {
+        "sleeperId": pick.sleeper_id,
+        "name": pick.name,
+        "position": pick.position,
+        "proTeam": pick.pro_team,
+        "points": round(pick.points, 1),
+        "round": pick.round,
+        "pickNo": pick.pick_no,
+        "boardSlot": pick.board_slot,
+        "myRank": pick.my_rank,
+    }
+
+
 def optimal_lineup(
     picks: Sequence[MockPick], roster_positions: Sequence[str]
 ) -> tuple[list[dict[str, Any]], float]:
@@ -210,17 +239,7 @@ def optimal_lineup(
             continue
         used.add(pick.sleeper_id)
         total += pick.points
-        lineup.append(
-            {
-                "slot": slot,
-                "player": {
-                    "name": pick.name,
-                    "position": pick.position,
-                    "proTeam": pick.pro_team,
-                    "points": round(pick.points, 1),
-                },
-            }
-        )
+        lineup.append({"slot": slot, "player": _pick_payload(pick)})
 
     # Keep the lineup in the league's own slot order for display.
     order = {slot: i for i, slot in enumerate(starters)}
@@ -316,6 +335,11 @@ def _team_payload(
     team: MockTeam, roster_positions: Sequence[str]
 ) -> dict[str, Any]:
     lineup, total = optimal_lineup(team.picks, roster_positions)
+    started = {
+        row["player"]["sleeperId"] for row in lineup if row["player"] is not None
+    }
+    bench = [p for p in team.picks if p.sleeper_id not in started]
+
     return {
         "slot": team.slot,
         "isMine": team.is_mine,
@@ -323,25 +347,15 @@ def _team_payload(
         "strategyLabel": STRATEGIES.get(team.strategy, team.strategy),
         "starterPoints": total,
         "lineup": lineup,
+        # Everything the lineup could not fit, in the order it was drafted.
+        "bench": [_pick_payload(p) for p in sorted(bench, key=lambda x: x.pick_no)],
         "positionCounts": [
             {"position": position, "count": count}
             for position, count in Counter(
                 p.position for p in team.picks
             ).most_common()
         ],
-        "picks": [
-            {
-                "pickNo": p.pick_no,
-                "round": p.round,
-                "name": p.name,
-                "position": p.position,
-                "proTeam": p.pro_team,
-                "points": round(p.points, 1),
-                "boardSlot": p.board_slot,
-                "myRank": p.my_rank,
-            }
-            for p in team.picks
-        ],
+        "picks": [_pick_payload(p) for p in team.picks],
     }
 
 
@@ -363,8 +377,16 @@ def run_mocks(
     strategies: Sequence[str] | None = None,
     runs_per_combo: int = 1,
     seed: int | None = None,
+    include_field: bool = True,
 ) -> dict[str, Any]:
-    """Simulate one mock per (slot, strategy) pair and return the finished teams."""
+    """Simulate one mock per (slot, strategy) pair and return the finished teams.
+
+    Every run drafts all twelve rosters, not just the user's. With include_field the
+    other eleven come back too, so a result can be inspected as the whole draft it
+    actually was rather than one team lifted out of it. Comparing many slots at once
+    turns that off, because the payload is then twelve times larger than the question
+    being asked.
+    """
     league = session.get(League, league_id)
     if league is None:
         raise ValueError(f"no league {league_id}")
@@ -408,6 +430,12 @@ def run_mocks(
                 mine = next(t for t in teams if t.is_mine)
                 payload = _team_payload(mine, league.roster_positions or [])
                 payload.update({"run": run + 1, "seed": run_seed})
+                if include_field:
+                    payload["field"] = [
+                        _team_payload(t, league.roster_positions or [])
+                        for t in teams
+                        if not t.is_mine
+                    ]
                 results.append(payload)
 
     return {
@@ -424,6 +452,188 @@ def run_mocks(
         ],
         "results": results,
     }
+
+
+# --- studies ---------------------------------------------------------------
+
+STUDY_SLOT = "slot"
+STUDY_STRATEGY = "strategy"
+
+# Ceilings chosen from measurement: one full 12-team draft costs about 27ms, so
+# these keep the worst case around twenty seconds rather than minutes.
+MAX_SLOT_RUNS = 60
+MAX_STRATEGY_RUNS = 200
+
+
+def _summarise(label: str, key: str, totals: list[float], **extra: Any) -> dict[str, Any]:
+    """Mean plus its uncertainty.
+
+    A bar chart of simulation means invites over-reading, so the spread travels with
+    the number: with enough runs the standard error is what says whether two bars
+    actually differ.
+    """
+    mean = statistics.mean(totals)
+    stdev = statistics.pstdev(totals) if len(totals) > 1 else 0.0
+    return {
+        "label": label,
+        "key": key,
+        "mean": round(mean, 1),
+        "stdev": round(stdev, 1),
+        "stderr": round(stdev / (len(totals) ** 0.5), 1) if totals else 0.0,
+        "min": round(min(totals), 1),
+        "max": round(max(totals), 1),
+        "n": len(totals),
+        **extra,
+    }
+
+
+def _study_context(session: Session, league_id: int):
+    league = session.get(League, league_id)
+    if league is None:
+        raise ValueError(f"no league {league_id}")
+    board = _board(session, league)
+    my_ranks = personal_ranks(session, league_id)
+    team_count, rounds, draft_type = _draft_shape(session, league)
+    return league, board, my_ranks, team_count, rounds, draft_type
+
+
+def _one_total(
+    board, my_ranks, league, team_count, rounds, draft_type, slot, strategy, seed
+) -> float:
+    teams = simulate(
+        board=board,
+        my_ranks=my_ranks,
+        roster_positions=league.roster_positions or [],
+        team_count=team_count,
+        rounds=rounds,
+        draft_type=draft_type,
+        my_slot=slot,
+        strategy=strategy,
+        seed=seed,
+        rival_strategies={
+            s: random.Random(seed * 97 + s).choice(list(STRATEGIES))
+            for s in range(1, team_count + 1)
+            if s != slot
+        },
+    )
+    mine = next(t for t in teams if t.is_mine)
+    _, total = optimal_lineup(mine.picks, league.roster_positions or [])
+    return total
+
+
+def study_slots(
+    session: Session,
+    league_id: int,
+    runs: int = 20,
+    strategy: str = BALANCED,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Average starting-lineup value from every draft slot.
+
+    Strategy is held constant across slots so the only thing varying is the seat.
+    """
+    league, board, my_ranks, team_count, rounds, draft_type = _study_context(
+        session, league_id
+    )
+    runs = max(1, min(runs, MAX_SLOT_RUNS))
+    master = random.Random(seed)
+    started = time.time()
+
+    rows: list[dict[str, Any]] = []
+    for slot in range(1, team_count + 1):
+        totals = [
+            _one_total(
+                board, my_ranks, league, team_count, rounds, draft_type,
+                slot, strategy, master.randrange(1 << 30),
+            )
+            for _ in range(runs)
+        ]
+        rows.append(_summarise(f"Slot {slot}", str(slot), totals, slot=slot))
+
+    return {
+        "kind": STUDY_SLOT,
+        "runs": runs,
+        "drafts": runs * team_count,
+        "strategy": strategy,
+        "strategyLabel": STRATEGIES.get(strategy, strategy),
+        "teamCount": team_count,
+        "elapsed": round(time.time() - started, 1),
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "results": rows,
+    }
+
+
+def study_strategies(
+    session: Session,
+    league_id: int,
+    runs: int = 50,
+    slot: int | None = None,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Average starting-lineup value for each opening strategy.
+
+    Slot is held constant - strategy value depends on where you sit, so mixing seats
+    would average the question away.
+    """
+    league, board, my_ranks, team_count, rounds, draft_type = _study_context(
+        session, league_id
+    )
+    runs = max(1, min(runs, MAX_STRATEGY_RUNS))
+    active_slot = slot or detect_slot(session, league) or 1
+    active_slot = max(1, min(active_slot, team_count))
+
+    master = random.Random(seed)
+    started = time.time()
+
+    rows: list[dict[str, Any]] = []
+    for strategy, label in STRATEGIES.items():
+        totals = [
+            _one_total(
+                board, my_ranks, league, team_count, rounds, draft_type,
+                active_slot, strategy, master.randrange(1 << 30),
+            )
+            for _ in range(runs)
+        ]
+        rows.append(_summarise(label, strategy, totals))
+
+    return {
+        "kind": STUDY_STRATEGY,
+        "runs": runs,
+        "drafts": runs * len(STRATEGIES),
+        "slot": active_slot,
+        "teamCount": team_count,
+        "elapsed": round(time.time() - started, 1),
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "results": rows,
+    }
+
+
+def save_study(session: Session, league_id: int, payload: dict[str, Any]) -> None:
+    """Keep the latest study so a page load does not have to re-run it."""
+    kind = payload["kind"]
+    row = session.execute(
+        select(SimStudy).where(
+            SimStudy.league_id == league_id, SimStudy.kind == kind
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = SimStudy(league_id=league_id, kind=kind)
+        session.add(row)
+    row.runs = payload.get("runs", 0)
+    row.payload = payload
+    row.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.commit()
+
+
+def load_study(
+    session: Session, league_id: int, kind: str
+) -> dict[str, Any] | None:
+    row = session.execute(
+        select(SimStudy).where(
+            SimStudy.league_id == league_id, SimStudy.kind == kind
+        )
+    ).scalar_one_or_none()
+    return row.payload if row else None
 
 
 # --- interactive mock ------------------------------------------------------

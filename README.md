@@ -205,13 +205,77 @@ matters: the Board list, the Players list, and the live draft assistant's
 recommendations. That is the point - seeing your number next to consensus is what tells
 you whether a player at their ADP is a bargain or a trap.
 
+## Positional dropoff curves
+
+The **Graphs** tab plots projected points against rank within a position, one line for
+QB, RB, WR and TE on a single shared scale. It is the picture behind value over
+replacement: what a pick buys is not a player's points but the gap to the next one at
+his position, and that gap is a slope.
+
+For NYC Fellas the first twelve at each position fall like this:
+
+```
+  QB   #1 369.7   #12 288.3    drop  81
+  RB   #1 364.9   #12 273.6    drop  91
+  WR   #1 356.3   #12 248.6    drop 108
+  TE   #1 241.9   #12 169.3    drop  73
+```
+
+A ring on each line marks where that position crosses **replacement level** - past it,
+another one of them barely improves your lineup. Hovering gives a crosshair and the
+player at that rank in every position at once, and a Table toggle gives the same numbers
+without relying on colour.
+
+Kickers and defenses are left off deliberately: both are nearly flat and only compress
+the vertical scale for the four positions a draft is actually decided on.
+
+### Two simulation studies
+
+Below the curves sit two bar charts, each backed by hundreds of simulated drafts. You
+choose how many drafts to run; the result is **saved server-side**, so reopening the page
+shows the last answer and when it was generated rather than a blank panel and a wait.
+
+**Value by draft slot** runs every seat with the strategy held constant, so the only
+thing changing is where you sit. **Value by opening strategy** runs every strategy from
+your own slot, so the seat is not a confound. Each isolates one variable on purpose.
+
+Both carry **one standard error per bar**. Simulation means without their spread invite
+over-reading, and with enough drafts the error bar is what says whether two bars actually
+differ. The axis does not start at zero - these differences are a few percent and would
+be invisible if it did, so the chart says so in as many words.
+
+The bars are one series with emphasis rather than a categorical palette: every bar is the
+same desaturated steel and the one that matters is picked out in the accent used for
+"yours" throughout the app. Colouring bars by value would double-encode what bar length
+already says.
+
+### A note on the colours
+
+The positional palette was **measured, not chosen**. The original set failed a
+colourblind-safety check badly - the old WR blue and TE violet were 1.4 apart under
+deuteranopia and 14.6 for normal vision, below the readable floor. On a chip carrying a
+text label that is survivable; on four overlapping lines it is not.
+
+The current six were searched for and validated against the chart surface, checking
+every pair rather than only neighbours: worst deuteranope separation 11.0, worst
+normal-vision separation 15.6, all inside the dark lightness band, all clearing 3:1
+contrast. Chip text colour is set per position from measured contrast - K and DEF take
+light text, the rest take dark.
+
 ## Mock drafts
 
 The **Mock** tab runs the draft rather than describing it. Two modes.
 
-**Quick sim** drafts a whole board and hands back the finished team. Pick which
-strategies to try and whether to run from your slot or all of them, press Generate, and
-compare the rosters side by side. A full 12-slot batch takes well under a second.
+**Quick sim** drafts a whole board and hands back the finished team - every starter and
+every bench player, each labelled with the round it was taken in. Pick which strategies
+to try and whether to run from your slot or all of them, press Generate, and compare the
+rosters side by side. A full 12-slot batch takes well under a second.
+
+Each result is one team lifted out of a draft that really happened, so **Full draft
+board** puts it back: all twelve rosters, sixteen rounds, your column highlighted, the
+rivals carrying the varied strategies they actually drafted with. Comparing every slot
+at once leaves the field out, because that question is about slots and carrying eleven
+extra teams per result would be twelve times the payload for it.
 
 ```
   Balanced       Jonathan Taylor(RB) + Drake London(WR)     starters 1972
@@ -236,6 +300,13 @@ Rivals draft the market board with noise and are handed varied strategies of the
 so the field is not twelve copies of the same team. Your team drafts **your rankings**
 with noticeably less noise - your opinions should mostly win, while still leaving room
 to be surprised. Set nothing in Rankings and your picks simply follow the market.
+
+How much noise is tuned by measurement, not taste. The first version let **18.6% of
+draftable players fall a full round or more**, so a third-rounder routinely lasted into
+the fourth and every simulated roster came out better than a real one. Tightening the
+spread to 0.07 of board position brings that to **3.2%**, with a median slide of three
+picks - rare enough to be a break, common enough to still be a draft. A regression test
+holds the line.
 
 Every simulated team obeys the same must-fill rule as the live assistant, so rosters
 finish able to field a legal lineup rather than ending up without a kicker.
@@ -340,7 +411,8 @@ backend/
   scoring/      rules.py — league scoring rules applied to raw stats
   analysis/     draft.py (VORP, need, must-fill), board.py (live state),
                 adp_board.py (ADP board, pick math, availability),
-                rankings.py (personal rankings), mock.py (mock drafts)
+                rankings.py (personal rankings), mock.py (mock drafts),
+                curves.py (positional dropoff)
   api/routes.py FastAPI, also serves the built frontend
   db.py         SQLite schema
   cli.py        command line entry point
@@ -355,6 +427,8 @@ tests/          regression tests, every case drawn from a real API failure
 - [x] **Draft ADP heat map** — per-league board, list and grid views, slot what-if
 - [x] **Personal rankings** — drag-and-drop, per league, surfaced across the other views
 - [x] **Mock drafts** — stochastic batch sim by strategy and slot, plus a live mock vs bots
+- [x] **Positional dropoff curves** — projected points by positional rank, four series
+- [x] **Simulation studies** — value by draft slot and by opening strategy, cached per league
 - [x] **Phase 3** — unified season dashboard (React)
 - [ ] **Phase 4** — start/sit lineup optimizer
 - [ ] **Phase 5** — waiver wire and trade analysis
