@@ -12,6 +12,7 @@ and a standard league produce genuinely different numbers from the same raw stat
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import (
@@ -316,6 +317,15 @@ class SimStudy(Base):
 
 def make_engine(db_path: str | None = None, echo: bool = False):
     path = db_path or str(DB_PATH)
+
+    # A fresh clone has no data/ directory - it holds only gitignored files, so git
+    # does not carry it - and SQLite will not create one, failing with the unhelpful
+    # "unable to open database file". Only sync and draft called ensure_dirs, so
+    # status, serve and check all crashed before the first sync. Doing it here covers
+    # every entry point, since they all reach the database through this function.
+    if path != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+
     return create_engine(f"sqlite:///{path}", echo=echo, future=True)
 
 
