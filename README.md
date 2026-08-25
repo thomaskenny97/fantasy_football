@@ -245,9 +245,22 @@ is only ever your own board. Running both is the point: if slot 2 wins on your r
 and slot 8 wins on the projections, the seat was never the thing doing the work. The
 projections side orders by **value over replacement** rather than raw points, because
 raw points ranks every startable quarterback above every running back - a board nobody
-drafts, and a strawman to compare against. Each basis keeps its own saved result, so
-flipping the toggle shows that basis's last run rather than a chart built from the
-other one.
+drafts, and a strawman to compare against.
+
+A **My pick noise** toggle sits beside it, controlling how loosely your team follows
+whichever board it was handed. Your picks always wobble - a draft where one team
+executes perfectly is not a draft - but *Tight* wobbles them at 45% of the spread the
+bots draft under, and *Like the bots* gives you exactly theirs. Tight is the honest
+default, and it quietly flatters the result: your team alone converts its board into
+picks nearly perfectly, so a seat or an opening can look good partly because you played
+it better than anyone else at the table could. Running it at the bots' noise takes that
+edge away and leaves what the seat itself is worth. In practice every opening loses a
+few points there, and the ranking between them mostly holds - which is the useful
+finding, since a conclusion that survives your own sloppiness is one you can draft on.
+
+The two toggles are independent, and each of the four combinations keeps its own saved
+result, so flipping either one shows that setting's last run rather than a chart built
+from a different one.
 
 Both carry **one standard error per bar**. Simulation means without their spread invite
 over-reading, and with enough drafts the error bar is what says whether two bars actually

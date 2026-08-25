@@ -238,26 +238,95 @@ def test_the_basis_actually_changes_who_i_draft():
     assert first_round(value_ranks(board, mine, BASIS_POINTS)) != late.sleeper_id
 
 
-def test_each_basis_keeps_its_own_cached_study():
-    """One basis overwriting the other's chart would make the toggle lie."""
+def test_every_study_setting_keeps_its_own_cached_study():
+    """One setting overwriting another's chart would make the toggles lie."""
     from backend.analysis.mock import (
         BASIS_MY_RANKS,
         BASIS_POINTS,
+        NOISE_FIELD,
+        NOISE_TIGHT,
         STUDY_SLOT,
         STUDY_STRATEGY,
         _study_key,
     )
 
     keys = {
-        _study_key(kind, basis)
+        _study_key(kind, basis, noise)
         for kind in (STUDY_SLOT, STUDY_STRATEGY)
         for basis in (BASIS_MY_RANKS, BASIS_POINTS)
+        for noise in (NOISE_TIGHT, NOISE_FIELD)
     }
-    assert len(keys) == 4
-    # The key rides in sim_study.kind, declared String(16).
-    assert all(len(key) <= 16 for key in keys)
-    # Studies cached before the toggle existed were run on the user's rankings.
-    assert _study_key(STUDY_SLOT, BASIS_MY_RANKS) == STUDY_SLOT
+    assert len(keys) == 8
+    # The key rides in sim_study.kind, declared String(32).
+    assert all(len(key) <= 32 for key in keys)
+    # Studies cached before the toggles existed were run at both defaults, so the
+    # defaults have to keep contributing nothing to the key.
+    assert _study_key(STUDY_SLOT, BASIS_MY_RANKS, NOISE_TIGHT) == STUDY_SLOT
+
+
+def test_bot_noise_setting_makes_me_draft_more_like_a_bot():
+    """The option has to reach the picks, and move them toward the field.
+
+    Measured over many drafts rather than asserted on one, because noise is noise and
+    a single seed could fall either way. The metric is discipline: how often a team
+    takes the best player still on its board. Loosening my noise has to cost me some
+    of that, and close some of the gap between me and the bots.
+
+    My board is set equal to the market board here so the two are judged against the
+    same ordering and only the noise differs.
+    """
+    from backend.analysis.mock import _MY_SPREAD_FACTOR
+
+    board = _board()
+    ranks = {p.sleeper_id: p.board_slot for p in board}
+
+    def discipline(factor):
+        mine = [0, 0]
+        bots = [0, 0]
+        for seed in range(15):
+            teams = simulate(
+                board=board,
+                my_ranks=ranks,
+                roster_positions=SLOTS,
+                team_count=12,
+                rounds=16,
+                draft_type="snake",
+                my_slot=6,
+                strategy=BALANCED,
+                seed=seed,
+                my_spread_factor=factor,
+            )
+            picks = sorted(
+                (p for t in teams for p in t.picks), key=lambda p: p.pick_no
+            )
+            gone: set[str] = set()
+            for pick in picks:
+                # Late rounds are dominated by must-fill and roster caps rather than
+                # by the board, so they say nothing about how closely it was followed.
+                if pick.round <= 10:
+                    best = min(
+                        p.board_slot for p in board if p.sleeper_id not in gone
+                    )
+                    tally = mine if pick.is_mine else bots
+                    tally[1] += 1
+                    tally[0] += pick.board_slot == best
+                gone.add(pick.sleeper_id)
+        return mine[0] / mine[1], bots[0] / bots[1]
+
+    tight_mine, tight_bots = discipline(_MY_SPREAD_FACTOR)
+    loose_mine, loose_bots = discipline(1.0)
+
+    # Loosening costs me discipline.
+    assert loose_mine < tight_mine
+
+    # And moves me toward the field rather than past it. Not all the way to equal:
+    # I draft one seat with a strategy while the bots are eleven seats without one,
+    # so the two are never measured under quite the same conditions.
+    assert loose_mine - loose_bots < tight_mine - tight_bots
+    assert loose_mine > loose_bots
+
+    # The bots were never supposed to change, and their board is untouched.
+    assert tight_bots == pytest.approx(loose_bots, abs=0.05)
 
 
 def test_rivals_ignore_my_rankings():

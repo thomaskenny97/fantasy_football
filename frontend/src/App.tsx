@@ -314,10 +314,13 @@ type Study = {
   slot?: number;
   strategy?: string;
   strategyLabel?: string;
-  // What the simulated user's team drafted off. Absent on studies cached before
-  // the toggle existed, which were all run on the user's rankings.
+  // What the simulated user's team drafted off, and how loosely it followed that
+  // board. Absent on studies cached before the toggles existed, which were all run
+  // on the user's rankings at the tight setting.
   basis?: StudyBasis;
   basisLabel?: string;
+  noise?: StudyNoise;
+  noiseLabel?: string;
   hasMyRanks?: boolean;
   teamCount: number;
   elapsed: number;
@@ -330,6 +333,13 @@ type StudyBasis = "my_ranks" | "points";
 const BASES: { key: StudyBasis; label: string }[] = [
   { key: "my_ranks", label: "My rankings" },
   { key: "points", label: "Projected points" },
+];
+
+type StudyNoise = "tight" | "field";
+
+const NOISES: { key: StudyNoise; label: string }[] = [
+  { key: "tight", label: "Tight" },
+  { key: "field", label: "Like the bots" },
 ];
 
 const get = <T,>(path: string): Promise<T> =>
@@ -1964,7 +1974,8 @@ function StudyBars({
         role="img"
         aria-label={
           `Average projected starting points, ${study.runs} drafts each, ` +
-          `drafting ${study.basisLabel ?? "My rankings"}`
+          `drafting ${study.basisLabel ?? "My rankings"} at ` +
+          `${(study.noiseLabel ?? "Tight").toLowerCase()} pick noise`
         }
       >
         {ticks.map((t, i) => (
@@ -2136,17 +2147,18 @@ function StudyPanel({
   const [busy, setBusy] = useState(false);
   const [asTable, setAsTable] = useState(false);
   const [basis, setBasis] = useState<StudyBasis>("my_ranks");
+  const [noise, setNoise] = useState<StudyNoise>("tight");
 
-  // The last run is kept server-side, per basis, so opening the page - or flipping
-  // the toggle - shows the previous answer rather than a blank panel and a wait.
+  // The last run is kept server-side per setting, so opening the page - or flipping
+  // either toggle - shows the previous answer rather than a blank panel and a wait.
   useEffect(() => {
     let live = true;
     setStudy(null);
     get<{ study: Study | null }>(
-      `/api/leagues/${leagueId}/mock/study?kind=${kind}&basis=${basis}`
+      `/api/leagues/${leagueId}/mock/study?kind=${kind}&basis=${basis}&noise=${noise}`
     )
       .then((r) => {
-        // A quick second toggle must not land the first basis's chart.
+        // A quick second toggle must not land the previous setting's chart.
         if (!live || !r.study) return;
         setStudy(r.study);
         setRuns(r.study.runs);
@@ -2155,14 +2167,14 @@ function StudyPanel({
     return () => {
       live = false;
     };
-  }, [leagueId, kind, basis]);
+  }, [leagueId, kind, basis, noise]);
 
   const run = () => {
     setBusy(true);
     send<{ study: Study }>(
       `/api/leagues/${leagueId}/mock/study/${kind}`,
       "POST",
-      { runs, basis }
+      { runs, basis, noise }
     )
       .then((r) => setStudy(r.study))
       .finally(() => setBusy(false));
@@ -2185,6 +2197,22 @@ function StudyPanel({
         Your team drafts <b>your own rankings</b>, rivals the market board. Flip to
         projected points to see how much of the answer is your board rather than the
         seat.
+      </>
+    );
+  const shownNoise = study?.noise ?? noise;
+  const noiseNote =
+    shownNoise === "field" ? (
+      <>
+        {" "}
+        Your picks carry the <b>same noise the bots draft under</b>, so you are no
+        more disciplined than the field and the bars show what the seat is worth
+        rather than what you are worth in it.
+      </>
+    ) : (
+      <>
+        {" "}
+        Your picks wobble off that board less than the bots wobble off theirs, which
+        credits you for being the most disciplined drafter at the table.
       </>
     );
   const fallbackNote =
@@ -2242,6 +2270,21 @@ function StudyPanel({
           </div>
         </div>
         <div className="group">
+          <label>My pick noise</label>
+          <div className="view-toggle" style={{ marginLeft: 0 }}>
+            {NOISES.map((n) => (
+              <button
+                key={n.key}
+                aria-pressed={noise === n.key}
+                disabled={busy}
+                onClick={() => setNoise(n.key)}
+              >
+                {n.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="group">
           <label>View</label>
           <div className="view-toggle" style={{ marginLeft: 0 }}>
             <button aria-pressed={!asTable} onClick={() => setAsTable(false)}>
@@ -2256,7 +2299,8 @@ function StudyPanel({
           {study ? (
             <>
               last run {ageOf(study.generatedAt)} ·{" "}
-              {study.basisLabel ?? "My rankings"}
+              {study.basisLabel ?? "My rankings"} ·{" "}
+              {study.noiseLabel ?? "Tight"}
               <br />
               {study.runs} drafts each · max {maxRuns}
             </>
@@ -2272,12 +2316,14 @@ function StudyPanel({
       {!study ? (
         <div className="notice">
           {blurb} {basisNote}
+          {noiseNote}
         </div>
       ) : asTable ? (
         <>
           <StudyTable study={study} />
           <div className="chart-note">
             {basisNote}
+            {noiseNote}
             {fallbackNote}
           </div>
         </>
@@ -2286,6 +2332,7 @@ function StudyPanel({
           <StudyBars study={study} accentKey={accentKey} />
           <div className="chart-note">
             {blurb} {basisNote}
+            {noiseNote}
             {fallbackNote} Bars carry one standard error; two that overlap are not
             meaningfully different, so raise the draft count before reading a small
             gap as real. <b>The axis does not start at zero</b> — the differences

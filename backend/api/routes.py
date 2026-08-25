@@ -361,6 +361,8 @@ class StudyRequest(BaseModel):
     strategy: str = "balanced"
     # What the user's own team drafts off: their rankings, or the projections.
     basis: str = mock_service.BASIS_MY_RANKS
+    # How loosely their team follows that board: disciplined, or as loose as the bots.
+    noise: str = mock_service.NOISE_TIGHT
 
 
 class MockAdvance(BaseModel):
@@ -448,11 +450,12 @@ def get_study(
     league_id: int,
     kind: str = "slot",
     basis: str = mock_service.BASIS_MY_RANKS,
+    noise: str = mock_service.NOISE_TIGHT,
 ) -> dict[str, Any]:
-    """The last study of this kind and basis, or an empty envelope if never run."""
+    """The last study run with these settings, or an empty envelope if never run."""
     with _session() as session:
-        payload = mock_service.load_study(session, league_id, kind, basis)
-        return {"kind": kind, "basis": basis, "study": payload}
+        payload = mock_service.load_study(session, league_id, kind, basis, noise)
+        return {"kind": kind, "basis": basis, "noise": noise, "study": payload}
 
 
 @app.post("/api/leagues/{league_id}/mock/study/slot")
@@ -466,6 +469,7 @@ def run_slot_study(league_id: int, body: StudyRequest) -> dict[str, Any]:
                 runs=body.runs,
                 strategy=body.strategy,
                 basis=body.basis,
+                noise=body.noise,
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -479,7 +483,12 @@ def run_strategy_study(league_id: int, body: StudyRequest) -> dict[str, Any]:
     with _session() as session:
         try:
             payload = mock_service.study_strategies(
-                session, league_id, runs=body.runs, slot=body.slot, basis=body.basis
+                session,
+                league_id,
+                runs=body.runs,
+                slot=body.slot,
+                basis=body.basis,
+                noise=body.noise,
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -12,7 +12,9 @@ is why two runs from the same slot can look genuinely different.
 Rival teams draft the market board with noise. Your team drafts *your* rankings with
 less noise, so your own opinions drive your roster while still leaving room for the
 board to surprise you - or, when a study asks for it, drafts the projections instead,
-so you can see which conclusions are your board's and which are the projections'.
+so you can see which conclusions are your board's and which are the projections'. A
+study can also hand your team the field's full noise, which asks what the seat is
+worth without crediting you for being the most disciplined drafter at the table.
 """
 
 from __future__ import annotations
@@ -93,6 +95,28 @@ def _spread(position: float) -> float:
 # Your own ranking is followed more tightly than the market is - it is your opinion,
 # so it should mostly win - but not so tightly that every run is identical.
 _MY_SPREAD_FACTOR = 0.45
+
+
+# How loosely your team follows its own board. Independent of *which* board that is:
+# either basis can be drafted disciplined or drafted like a bot.
+#
+# Tight is the honest default - you are the one person in the draft who will not reach
+# on a whim. But it quietly flatters the result: your team alone converts its board
+# into picks almost perfectly, so a slot or an opening can look good partly because
+# you played it better than anyone else at the table could. Running the field setting
+# takes that edge away and leaves only what the seat itself is worth.
+NOISE_TIGHT = "tight"
+NOISE_FIELD = "field"
+
+NOISES: dict[str, str] = {
+    NOISE_TIGHT: "Tight",
+    NOISE_FIELD: "Like the bots",
+}
+
+_NOISE_FACTORS: dict[str, float] = {
+    NOISE_TIGHT: _MY_SPREAD_FACTOR,
+    NOISE_FIELD: 1.0,  # exactly the spread every rival drafts under
+}
 
 
 # What your simulated team drafts off. Rivals always draft the market board; this is
@@ -295,8 +319,13 @@ def simulate(
     strategy: str = BALANCED,
     seed: int | None = None,
     rival_strategies: dict[int, str] | None = None,
+    my_spread_factor: float = _MY_SPREAD_FACTOR,
 ) -> list[MockTeam]:
-    """Run one mock draft and return every team's roster."""
+    """Run one mock draft and return every team's roster.
+
+    `my_spread_factor` scales how far your picks drift off your own board: the default
+    keeps you more disciplined than the field, 1.0 makes you exactly as erratic as it.
+    """
     rng = random.Random(seed)
 
     # One draw per player per draft: this run's version of how the board falls.
@@ -308,7 +337,7 @@ def simulate(
     for p in board:
         anchor = my_ranks.get(p.sleeper_id, p.board_slot)
         my_value[p.sleeper_id] = anchor + rng.gauss(
-            0.0, _spread(anchor) * _MY_SPREAD_FACTOR
+            0.0, _spread(anchor) * my_spread_factor
         )
 
     rivals = rival_strategies or {}
@@ -535,7 +564,8 @@ def _study_context(session: Session, league_id: int):
 
 
 def _one_total(
-    board, my_ranks, league, team_count, rounds, draft_type, slot, strategy, seed
+    board, my_ranks, league, team_count, rounds, draft_type, slot, strategy, seed,
+    my_spread_factor: float = _MY_SPREAD_FACTOR,
 ) -> float:
     teams = simulate(
         board=board,
@@ -552,6 +582,7 @@ def _one_total(
             for s in range(1, team_count + 1)
             if s != slot
         },
+        my_spread_factor=my_spread_factor,
     )
     mine = next(t for t in teams if t.is_mine)
     _, total = optimal_lineup(mine.picks, league.roster_positions or [])
@@ -565,6 +596,7 @@ def study_slots(
     strategy: str = BALANCED,
     seed: int | None = None,
     basis: str = BASIS_MY_RANKS,
+    noise: str = NOISE_TIGHT,
 ) -> dict[str, Any]:
     """Average starting-lineup value from every draft slot.
 
@@ -574,6 +606,7 @@ def study_slots(
         session, league_id
     )
     basis = basis if basis in BASES else BASIS_MY_RANKS
+    noise = noise if noise in NOISES else NOISE_TIGHT
     ranks = value_ranks(board, my_ranks, basis)
     runs = max(1, min(runs, MAX_SLOT_RUNS))
     master = random.Random(seed)
@@ -585,6 +618,7 @@ def study_slots(
             _one_total(
                 board, ranks, league, team_count, rounds, draft_type,
                 slot, strategy, master.randrange(1 << 30),
+                _NOISE_FACTORS[noise],
             )
             for _ in range(runs)
         ]
@@ -598,6 +632,8 @@ def study_slots(
         "strategyLabel": STRATEGIES.get(strategy, strategy),
         "basis": basis,
         "basisLabel": BASES[basis],
+        "noise": noise,
+        "noiseLabel": NOISES[noise],
         # False means a "my rankings" run had nothing of yours to use and fell back to
         # the market board, which the chart should say rather than quietly imply.
         "hasMyRanks": bool(my_ranks),
@@ -615,6 +651,7 @@ def study_strategies(
     slot: int | None = None,
     seed: int | None = None,
     basis: str = BASIS_MY_RANKS,
+    noise: str = NOISE_TIGHT,
 ) -> dict[str, Any]:
     """Average starting-lineup value for each opening strategy.
 
@@ -625,6 +662,7 @@ def study_strategies(
         session, league_id
     )
     basis = basis if basis in BASES else BASIS_MY_RANKS
+    noise = noise if noise in NOISES else NOISE_TIGHT
     ranks = value_ranks(board, my_ranks, basis)
     runs = max(1, min(runs, MAX_STRATEGY_RUNS))
     active_slot = slot or detect_slot(session, league) or 1
@@ -639,6 +677,7 @@ def study_strategies(
             _one_total(
                 board, ranks, league, team_count, rounds, draft_type,
                 active_slot, strategy, master.randrange(1 << 30),
+                _NOISE_FACTORS[noise],
             )
             for _ in range(runs)
         ]
@@ -651,6 +690,8 @@ def study_strategies(
         "slot": active_slot,
         "basis": basis,
         "basisLabel": BASES[basis],
+        "noise": noise,
+        "noiseLabel": NOISES[noise],
         "hasMyRanks": bool(my_ranks),
         "teamCount": team_count,
         "elapsed": round(time.time() - started, 1),
@@ -659,21 +700,35 @@ def study_strategies(
     }
 
 
-def _study_key(kind: str, basis: str) -> str:
+def _study_key(
+    kind: str, basis: str, noise: str = NOISE_TIGHT
+) -> str:
     """Cache key for a study.
 
-    The basis is part of the question, not a display setting, so each one keeps its own
-    remembered answer: flipping the toggle shows the last run *of that basis* instead
-    of a chart built from the other one. Encoded into the existing kind column rather
-    than added as a column, because the cache is keyed on (league, kind) by a unique
-    constraint SQLite cannot alter in place.
+    Basis and noise are part of the question, not display settings, so each combination
+    keeps its own remembered answer: flipping a toggle shows the last run *of that
+    setting* instead of a chart built from another one. Encoded into the existing kind
+    column rather than added as columns, because the cache is keyed on (league, kind)
+    by a unique constraint SQLite cannot alter in place.
+
+    Defaults contribute nothing, so a study run before either toggle existed still
+    loads under the settings it was actually run with.
     """
-    return kind if basis == BASIS_MY_RANKS else f"{kind}:{basis}"
+    key = kind
+    if basis != BASIS_MY_RANKS:
+        key += f":{basis}"
+    if noise != NOISE_TIGHT:
+        key += f":{noise}"
+    return key
 
 
 def save_study(session: Session, league_id: int, payload: dict[str, Any]) -> None:
     """Keep the latest study so a page load does not have to re-run it."""
-    kind = _study_key(payload["kind"], payload.get("basis", BASIS_MY_RANKS))
+    kind = _study_key(
+        payload["kind"],
+        payload.get("basis", BASIS_MY_RANKS),
+        payload.get("noise", NOISE_TIGHT),
+    )
     row = session.execute(
         select(SimStudy).where(
             SimStudy.league_id == league_id, SimStudy.kind == kind
@@ -689,12 +744,16 @@ def save_study(session: Session, league_id: int, payload: dict[str, Any]) -> Non
 
 
 def load_study(
-    session: Session, league_id: int, kind: str, basis: str = BASIS_MY_RANKS
+    session: Session,
+    league_id: int,
+    kind: str,
+    basis: str = BASIS_MY_RANKS,
+    noise: str = NOISE_TIGHT,
 ) -> dict[str, Any] | None:
     row = session.execute(
         select(SimStudy).where(
             SimStudy.league_id == league_id,
-            SimStudy.kind == _study_key(kind, basis),
+            SimStudy.kind == _study_key(kind, basis, noise),
         )
     ).scalar_one_or_none()
     return row.payload if row else None

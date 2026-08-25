@@ -308,10 +308,12 @@ class SimStudy(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     league_id: Mapped[int] = mapped_column(ForeignKey("league.id"), index=True)
 
-    # "slot" (value by draft position) or "strategy" (value by opening), suffixed
-    # with the value basis when it is not the user's own rankings - "slot:points".
-    # Each basis is a different question, so each keeps its own cached answer.
-    kind: Mapped[str] = mapped_column(String(16), index=True)
+    # "slot" (value by draft position) or "strategy" (value by opening), suffixed with
+    # any non-default study setting - "slot:points", "strategy:points:field". Each
+    # combination is a different question, so each keeps its own cached answer.
+    # SQLite does not enforce VARCHAR length, so widening this leaves existing rows
+    # alone; the length is declared for the sake of anything reading the schema.
+    kind: Mapped[str] = mapped_column(String(32), index=True)
     runs: Mapped[int] = mapped_column(Integer, default=0)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
