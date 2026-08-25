@@ -529,6 +529,17 @@ table.standings td.team-name {
   border-color: var(--text-faint);
 }
 
+/* Locked while a simulation is running, so a finished study cannot land under a
+   toggle the user has since moved. */
+.view-toggle button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.view-toggle button:disabled:hover {
+  color: var(--text-dim);
+}
+
 .clock {
   display: flex;
   align-items: baseline;

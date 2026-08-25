@@ -314,11 +314,23 @@ type Study = {
   slot?: number;
   strategy?: string;
   strategyLabel?: string;
+  // What the simulated user's team drafted off. Absent on studies cached before
+  // the toggle existed, which were all run on the user's rankings.
+  basis?: StudyBasis;
+  basisLabel?: string;
+  hasMyRanks?: boolean;
   teamCount: number;
   elapsed: number;
   generatedAt: string;
   results: StudyRow[];
 };
+
+type StudyBasis = "my_ranks" | "points";
+
+const BASES: { key: StudyBasis; label: string }[] = [
+  { key: "my_ranks", label: "My rankings" },
+  { key: "points", label: "Projected points" },
+];
 
 const get = <T,>(path: string): Promise<T> =>
   fetch(`${API}${path}`).then((r) => {
@@ -1950,7 +1962,10 @@ function StudyBars({
       <svg
         viewBox={`0 0 ${BAR.w} ${BAR.h}`}
         role="img"
-        aria-label={`Average projected starting points, ${study.runs} drafts each`}
+        aria-label={
+          `Average projected starting points, ${study.runs} drafts each, ` +
+          `drafting ${study.basisLabel ?? "My rankings"}`
+        }
       >
         {ticks.map((t, i) => (
           <g key={i}>
@@ -2120,33 +2135,66 @@ function StudyPanel({
   const [runs, setRuns] = useState(defaultRuns);
   const [busy, setBusy] = useState(false);
   const [asTable, setAsTable] = useState(false);
+  const [basis, setBasis] = useState<StudyBasis>("my_ranks");
 
-  // The last run is kept server-side, so opening the page shows the previous
-  // answer rather than a blank panel and a wait.
+  // The last run is kept server-side, per basis, so opening the page - or flipping
+  // the toggle - shows the previous answer rather than a blank panel and a wait.
   useEffect(() => {
+    let live = true;
     setStudy(null);
-    get<{ study: Study | null }>(`/api/leagues/${leagueId}/mock/study?kind=${kind}`)
+    get<{ study: Study | null }>(
+      `/api/leagues/${leagueId}/mock/study?kind=${kind}&basis=${basis}`
+    )
       .then((r) => {
-        if (r.study) {
-          setStudy(r.study);
-          setRuns(r.study.runs);
-        }
+        // A quick second toggle must not land the first basis's chart.
+        if (!live || !r.study) return;
+        setStudy(r.study);
+        setRuns(r.study.runs);
       })
       .catch(() => undefined);
-  }, [leagueId, kind]);
+    return () => {
+      live = false;
+    };
+  }, [leagueId, kind, basis]);
 
   const run = () => {
     setBusy(true);
     send<{ study: Study }>(
       `/api/leagues/${leagueId}/mock/study/${kind}`,
       "POST",
-      { runs }
+      { runs, basis }
     )
       .then((r) => setStudy(r.study))
       .finally(() => setBusy(false));
   };
 
   const estimate = (runs * perRun * 0.027).toFixed(0);
+
+  // What the toggle actually changed, said in the panel rather than left implicit:
+  // the two charts answer different questions and are easy to confuse once run.
+  const shown = study?.basis ?? basis;
+  const basisNote =
+    shown === "points" ? (
+      <>
+        Your team drafts the <b>projections</b> — ordered by points over replacement,
+        so an elite quarterback does not outrank an elite back on raw total alone.
+        Rivals draft the market board, as always.
+      </>
+    ) : (
+      <>
+        Your team drafts <b>your own rankings</b>, rivals the market board. Flip to
+        projected points to see how much of the answer is your board rather than the
+        seat.
+      </>
+    );
+  const fallbackNote =
+    shown === "my_ranks" && study?.hasMyRanks === false ? (
+      <>
+        {" "}
+        You have no ranking saved for this league yet, so this run fell back to the
+        market board — set one on the Rankings tab to make the two sides differ.
+      </>
+    ) : null;
 
   return (
     <div className="study-block">
@@ -2179,6 +2227,21 @@ function StudyPanel({
           </button>
         </div>
         <div className="group">
+          <label>Draft off</label>
+          <div className="view-toggle" style={{ marginLeft: 0 }}>
+            {BASES.map((b) => (
+              <button
+                key={b.key}
+                aria-pressed={basis === b.key}
+                disabled={busy}
+                onClick={() => setBasis(b.key)}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="group">
           <label>View</label>
           <div className="view-toggle" style={{ marginLeft: 0 }}>
             <button aria-pressed={!asTable} onClick={() => setAsTable(false)}>
@@ -2192,13 +2255,14 @@ function StudyPanel({
         <div className="study-meta">
           {study ? (
             <>
-              last run {ageOf(study.generatedAt)}
+              last run {ageOf(study.generatedAt)} ·{" "}
+              {study.basisLabel ?? "My rankings"}
               <br />
               {study.runs} drafts each · max {maxRuns}
             </>
           ) : (
             <>
-              not run yet
+              not run on this basis yet
               <br />~{estimate}s for {runs * perRun} drafts
             </>
           )}
@@ -2206,14 +2270,23 @@ function StudyPanel({
       </div>
 
       {!study ? (
-        <div className="notice">{blurb}</div>
+        <div className="notice">
+          {blurb} {basisNote}
+        </div>
       ) : asTable ? (
-        <StudyTable study={study} />
+        <>
+          <StudyTable study={study} />
+          <div className="chart-note">
+            {basisNote}
+            {fallbackNote}
+          </div>
+        </>
       ) : (
         <>
           <StudyBars study={study} accentKey={accentKey} />
           <div className="chart-note">
-            {blurb} Bars carry one standard error; two that overlap are not
+            {blurb} {basisNote}
+            {fallbackNote} Bars carry one standard error; two that overlap are not
             meaningfully different, so raise the draft count before reading a small
             gap as real. <b>The axis does not start at zero</b> — the differences
             here are a few percent and would be invisible if it did.

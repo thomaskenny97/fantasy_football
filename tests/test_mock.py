@@ -184,6 +184,82 @@ def test_my_rankings_drive_my_picks():
     assert mine.picks[taken.index(late.sleeper_id)].pick_no < 60
 
 
+def test_projected_points_basis_orders_by_value_over_replacement():
+    """The projections basis has to be a board, not a points leaderboard.
+
+    Raw points would put every startable quarterback ahead of every running back,
+    which is not a draft anyone runs and would make the toggle a strawman.
+    """
+    from backend.analysis.mock import BASIS_POINTS, value_ranks
+
+    board = _board()
+    ranks = value_ranks(board, {}, BASIS_POINTS)
+
+    assert len(ranks) == len(board)  # nothing falls through to a market fallback
+    assert sorted(ranks.values()) == list(range(1, len(board) + 1))
+
+    by_rank = sorted(board, key=lambda p: ranks[p.sleeper_id])
+    vorps = [p.vorp for p in by_rank]
+    assert vorps == sorted(vorps, reverse=True)
+
+
+def test_my_ranks_basis_is_left_alone():
+    from backend.analysis.mock import BASIS_MY_RANKS, value_ranks
+
+    board = _board()
+    mine = {board[40].sleeper_id: 1}
+    assert value_ranks(board, mine, BASIS_MY_RANKS) == mine
+
+
+def test_the_basis_actually_changes_who_i_draft():
+    """The toggle has to reach the picks, not just the label on the chart."""
+    from backend.analysis.mock import BASIS_POINTS, value_ranks
+
+    board = _board()
+    # A player consensus and the projections both bury, but the user loves.
+    late = board[120]
+    mine = {late.sleeper_id: 1}
+
+    def first_round(ranks):
+        teams = simulate(
+            board=board,
+            my_ranks=ranks,
+            roster_positions=SLOTS,
+            team_count=12,
+            rounds=16,
+            draft_type="snake",
+            my_slot=1,
+            strategy=BALANCED,
+            seed=3,
+        )
+        return next(t for t in teams if t.is_mine).picks[0].sleeper_id
+
+    assert first_round(mine) == late.sleeper_id
+    assert first_round(value_ranks(board, mine, BASIS_POINTS)) != late.sleeper_id
+
+
+def test_each_basis_keeps_its_own_cached_study():
+    """One basis overwriting the other's chart would make the toggle lie."""
+    from backend.analysis.mock import (
+        BASIS_MY_RANKS,
+        BASIS_POINTS,
+        STUDY_SLOT,
+        STUDY_STRATEGY,
+        _study_key,
+    )
+
+    keys = {
+        _study_key(kind, basis)
+        for kind in (STUDY_SLOT, STUDY_STRATEGY)
+        for basis in (BASIS_MY_RANKS, BASIS_POINTS)
+    }
+    assert len(keys) == 4
+    # The key rides in sim_study.kind, declared String(16).
+    assert all(len(key) <= 16 for key in keys)
+    # Studies cached before the toggle existed were run on the user's rankings.
+    assert _study_key(STUDY_SLOT, BASIS_MY_RANKS) == STUDY_SLOT
+
+
 def test_rivals_ignore_my_rankings():
     """My opinion should move my board, not everyone else's."""
     board = _board()

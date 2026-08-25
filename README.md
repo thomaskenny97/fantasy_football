@@ -239,6 +239,16 @@ shows the last answer and when it was generated rather than a blank panel and a 
 thing changing is where you sit. **Value by opening strategy** runs every strategy from
 your own slot, so the seat is not a confound. Each isolates one variable on purpose.
 
+A **Draft off** toggle on both charts says what your simulated team drafts: *My
+rankings*, or *Projected points*. The rivals draft the market board either way - this
+is only ever your own board. Running both is the point: if slot 2 wins on your rankings
+and slot 8 wins on the projections, the seat was never the thing doing the work. The
+projections side orders by **value over replacement** rather than raw points, because
+raw points ranks every startable quarterback above every running back - a board nobody
+drafts, and a strawman to compare against. Each basis keeps its own saved result, so
+flipping the toggle shows that basis's last run rather than a chart built from the
+other one.
+
 Both carry **one standard error per bar**. Simulation means without their spread invite
 over-reading, and with enough drafts the error bar is what says whether two bars actually
 differ. The axis does not start at zero - these differences are a few percent and would

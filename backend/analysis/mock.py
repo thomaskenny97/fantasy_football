@@ -11,7 +11,8 @@ is why two runs from the same slot can look genuinely different.
 
 Rival teams draft the market board with noise. Your team drafts *your* rankings with
 less noise, so your own opinions drive your roster while still leaving room for the
-board to surprise you.
+board to surprise you - or, when a study asks for it, drafts the projections instead,
+so you can see which conclusions are your board's and which are the projections'.
 """
 
 from __future__ import annotations
@@ -92,6 +93,42 @@ def _spread(position: float) -> float:
 # Your own ranking is followed more tightly than the market is - it is your opinion,
 # so it should mostly win - but not so tightly that every run is identical.
 _MY_SPREAD_FACTOR = 0.45
+
+
+# What your simulated team drafts off. Rivals always draft the market board; this is
+# only ever the basis for your own picks.
+#
+# The comparison is the point. "Does slot 4 beat slot 9" has a different answer for a
+# board you actually believe in than for the projections everyone can see, and a
+# strategy that pays off on your board may only pay off *because* of your board. Being
+# able to flip between the two says which of the two is doing the work.
+BASIS_MY_RANKS = "my_ranks"
+BASIS_POINTS = "points"
+
+BASES: dict[str, str] = {
+    BASIS_MY_RANKS: "My rankings",
+    BASIS_POINTS: "Projected points",
+}
+
+
+def value_ranks(
+    board: Sequence[BoardPlayer], my_ranks: dict[str, int], basis: str
+) -> dict[str, int]:
+    """{sleeper_id: rank} your team drafts off, for the given basis.
+
+    Points ordering is by value over replacement, not by raw points. Raw points ranks
+    every startable quarterback above every running back - a board no one drafts and
+    that would make the comparison a strawman - because it ignores that the twelfth
+    quarterback is nearly as good as the first while the twelfth running back is not.
+    VORP is the standard way to state a projection as a draft position, so it is what
+    "projected points" means here.
+    """
+    if basis != BASIS_POINTS:
+        return dict(my_ranks)
+
+    # board_slot breaks ties so the ordering is stable run to run.
+    ordered = sorted(board, key=lambda p: (-p.vorp, p.board_slot))
+    return {p.sleeper_id: rank for rank, p in enumerate(ordered, start=1)}
 
 
 @dataclass
@@ -527,6 +564,7 @@ def study_slots(
     runs: int = 20,
     strategy: str = BALANCED,
     seed: int | None = None,
+    basis: str = BASIS_MY_RANKS,
 ) -> dict[str, Any]:
     """Average starting-lineup value from every draft slot.
 
@@ -535,6 +573,8 @@ def study_slots(
     league, board, my_ranks, team_count, rounds, draft_type = _study_context(
         session, league_id
     )
+    basis = basis if basis in BASES else BASIS_MY_RANKS
+    ranks = value_ranks(board, my_ranks, basis)
     runs = max(1, min(runs, MAX_SLOT_RUNS))
     master = random.Random(seed)
     started = time.time()
@@ -543,7 +583,7 @@ def study_slots(
     for slot in range(1, team_count + 1):
         totals = [
             _one_total(
-                board, my_ranks, league, team_count, rounds, draft_type,
+                board, ranks, league, team_count, rounds, draft_type,
                 slot, strategy, master.randrange(1 << 30),
             )
             for _ in range(runs)
@@ -556,6 +596,11 @@ def study_slots(
         "drafts": runs * team_count,
         "strategy": strategy,
         "strategyLabel": STRATEGIES.get(strategy, strategy),
+        "basis": basis,
+        "basisLabel": BASES[basis],
+        # False means a "my rankings" run had nothing of yours to use and fell back to
+        # the market board, which the chart should say rather than quietly imply.
+        "hasMyRanks": bool(my_ranks),
         "teamCount": team_count,
         "elapsed": round(time.time() - started, 1),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -569,6 +614,7 @@ def study_strategies(
     runs: int = 50,
     slot: int | None = None,
     seed: int | None = None,
+    basis: str = BASIS_MY_RANKS,
 ) -> dict[str, Any]:
     """Average starting-lineup value for each opening strategy.
 
@@ -578,6 +624,8 @@ def study_strategies(
     league, board, my_ranks, team_count, rounds, draft_type = _study_context(
         session, league_id
     )
+    basis = basis if basis in BASES else BASIS_MY_RANKS
+    ranks = value_ranks(board, my_ranks, basis)
     runs = max(1, min(runs, MAX_STRATEGY_RUNS))
     active_slot = slot or detect_slot(session, league) or 1
     active_slot = max(1, min(active_slot, team_count))
@@ -589,7 +637,7 @@ def study_strategies(
     for strategy, label in STRATEGIES.items():
         totals = [
             _one_total(
-                board, my_ranks, league, team_count, rounds, draft_type,
+                board, ranks, league, team_count, rounds, draft_type,
                 active_slot, strategy, master.randrange(1 << 30),
             )
             for _ in range(runs)
@@ -601,6 +649,9 @@ def study_strategies(
         "runs": runs,
         "drafts": runs * len(STRATEGIES),
         "slot": active_slot,
+        "basis": basis,
+        "basisLabel": BASES[basis],
+        "hasMyRanks": bool(my_ranks),
         "teamCount": team_count,
         "elapsed": round(time.time() - started, 1),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -608,9 +659,21 @@ def study_strategies(
     }
 
 
+def _study_key(kind: str, basis: str) -> str:
+    """Cache key for a study.
+
+    The basis is part of the question, not a display setting, so each one keeps its own
+    remembered answer: flipping the toggle shows the last run *of that basis* instead
+    of a chart built from the other one. Encoded into the existing kind column rather
+    than added as a column, because the cache is keyed on (league, kind) by a unique
+    constraint SQLite cannot alter in place.
+    """
+    return kind if basis == BASIS_MY_RANKS else f"{kind}:{basis}"
+
+
 def save_study(session: Session, league_id: int, payload: dict[str, Any]) -> None:
     """Keep the latest study so a page load does not have to re-run it."""
-    kind = payload["kind"]
+    kind = _study_key(payload["kind"], payload.get("basis", BASIS_MY_RANKS))
     row = session.execute(
         select(SimStudy).where(
             SimStudy.league_id == league_id, SimStudy.kind == kind
@@ -626,11 +689,12 @@ def save_study(session: Session, league_id: int, payload: dict[str, Any]) -> Non
 
 
 def load_study(
-    session: Session, league_id: int, kind: str
+    session: Session, league_id: int, kind: str, basis: str = BASIS_MY_RANKS
 ) -> dict[str, Any] | None:
     row = session.execute(
         select(SimStudy).where(
-            SimStudy.league_id == league_id, SimStudy.kind == kind
+            SimStudy.league_id == league_id,
+            SimStudy.kind == _study_key(kind, basis),
         )
     ).scalar_one_or_none()
     return row.payload if row else None
